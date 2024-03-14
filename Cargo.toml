@@ -1,0 +1,16 @@
+[package]
+name = "scale-info-legacy"
+version = "0.0.1"
+authors = ["Parity Technologies <admin@parity.io>"]
+edition = "2021"
+
+license = "Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/paritytech/scale-info-legacy"
+documentation = "https://docs.rs/scale-info-legacy"
+homepage = "https://www.parity.io/"
+description = "Create type information that can be used to decode historic data from Substrate based chains"
+keywords = ["parity", "scale", "encoding", "decoding"]
+include = ["Cargo.toml", "src/**/*.rs", "README.md", "LICENSE"]
+
+[dependencies]
