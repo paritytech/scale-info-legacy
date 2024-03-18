@@ -14,3 +14,5 @@ keywords = ["parity", "scale", "encoding", "decoding"]
 include = ["Cargo.toml", "src/**/*.rs", "README.md", "LICENSE"]
 
 [dependencies]
+derive_more = { version = "0.99.17", default-features = false, features = ["display"] }
+yap = "0.12.0"
