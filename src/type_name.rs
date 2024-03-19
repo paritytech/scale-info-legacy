@@ -2,62 +2,188 @@
 //! and represents the name of a type.
 
 use yap::{types::StrTokens, IntoTokens, TokenLocation, Tokens};
+use smallvec::SmallVec;
+use smallstr::SmallString;
 
-/// A representation of some type name.
+/// Representation of a type name. This can be parsed fro ma string via [`TypeName::parse()`],
+/// and then the resulting representation explored with [`TypeName::def()`].
+#[derive(Debug,Clone)]
+pub struct TypeName {
+    registry: Registry
+}
+
+// We only implement this because `scale_type_resolver::TypeResolver` requires
+// type IDs to impl Default.
+impl Default for TypeName {
+    fn default() -> Self {
+        // Various methods expect the registry to have at least oen type in it,
+        // so we set the type to be the empty unit type.
+        let unit_type = TypeNameInner::Unnamed { params: Params::new() };
+        Self { registry: Registry::from_iter([unit_type]) }
+    }
+}
+
+impl TypeName {
+    /// Parse an input string into a [`TypeName`].
+    pub fn parse(input: &str) -> Result<TypeName, ParseError> {
+        let mut tokens = input.into_tokens();
+        let mut registry = Registry::new();
+        parse_type_name(&mut tokens, &mut registry)?;
+        Ok(TypeName { registry })
+    }
+
+    /// Fetch the definition of this type.
+    pub fn def<'tn>(&'tn self) -> TypeNameDef<'tn> {
+        self.def_at(self.registry.len() - 1)
+    }
+
+    // Fetch (and expect to exist) a definition at some index.
+    fn def_at<'tn>(&'tn self, idx: usize) -> TypeNameDef<'tn> {
+        let entry = self.registry
+            .get(idx)
+            .expect("one item expected in TypeName");
+        match entry {
+            TypeNameInner::Named { name, params } => {
+                TypeNameDef::Named(NamedTypeName {
+                    name,
+                    params,
+                    handle: self
+                })
+            },
+            TypeNameInner::Unnamed { params } => {
+                TypeNameDef::Unnamed(UnnamedTypeName {
+                    params,
+                    handle: self
+                })
+            },
+            TypeNameInner::Array { param, length } => {
+                TypeNameDef::Array(ArrayTypeName {
+                    param: *param,
+                    length: *length,
+                    handle: self
+                })
+            },
+        }
+    }
+}
+
+/// The definition of some type.
+#[derive(Debug,Copy,Clone)]
+pub enum TypeNameDef<'tn> {
+    /// Types like `Vec<T>`, `Foo` and `path::to::Bar<A,B>`, `i32`, `bool`
+    /// etc are _named_ types.
+    Named(NamedTypeName<'tn>),
+    /// Tuples like `()` and `(Foo, Bar<A>)` are _unnamed_ types.
+    Unnamed(UnnamedTypeName<'tn>),
+    /// Fixed length arrays like `[Bar; 32]` are _array_ types.
+    Array(ArrayTypeName<'tn>),
+}
+
+#[cfg(test)]
+impl <'tn> TypeNameDef<'tn> {
+    pub fn unwrap_named(self) -> NamedTypeName<'tn> {
+        match self {
+            TypeNameDef::Named(a) => a,
+            _ => panic!("Cannot unwrap '{self:?}' into an NamedTypeName")
+        }
+    }
+    pub fn unwrap_unnamed(self) -> UnnamedTypeName<'tn> {
+        match self {
+            TypeNameDef::Unnamed(a) => a,
+            _ => panic!("Cannot unwrap '{self:?}' into an UnnamedTypeName")
+        }
+    }
+    pub fn unwrap_array(self) -> ArrayTypeName<'tn> {
+        match self {
+            TypeNameDef::Array(a) => a,
+            _ => panic!("Cannot unwrap '{self:?}' into an ArrayTypeName")
+        }
+    }
+}
+
+/// The definition of a named type.
+#[derive(Debug,Copy,Clone)]
+pub struct NamedTypeName<'tn> {
+    name: &'tn str,
+    params: &'tn Params,
+    handle: &'tn TypeName
+}
+
+impl <'tn> NamedTypeName<'tn> {
+    /// The type name.
+    pub fn name(&self) -> &str {
+        self.name
+    }
+
+    /// Iterate over the type parameter definitions.
+    pub fn param_defs(&self) -> impl Iterator<Item=TypeNameDef<'tn>> {
+        let handle = self.handle;
+        self.params.iter().map(|idx| handle.def_at(*idx))
+    }
+}
+
+/// The definition of an unnamed type.
+#[derive(Debug,Copy,Clone)]
+pub struct UnnamedTypeName<'tn> {
+    params: &'tn Params,
+    handle: &'tn TypeName
+}
+
+impl <'tn, 'a> UnnamedTypeName<'tn> {
+    /// Iterate over the type parameter definitions
+    pub fn param_defs(&self) -> impl Iterator<Item=TypeNameDef<'tn>> {
+        let handle = self.handle;
+        self.params.iter().map(|idx| handle.def_at(*idx))
+    }
+}
+
+
+/// The definition of an array type.
+#[derive(Debug,Copy,Clone)]
+pub struct ArrayTypeName<'tn> {
+    param: usize,
+    length: usize,
+    handle: &'tn TypeName
+}
+
+impl <'tn> ArrayTypeName<'tn> {
+    /// The array length
+    pub fn length(&self) -> usize {
+        self.length
+    }
+    /// The array type parameter.
+    pub fn param_def(&self) -> TypeNameDef<'tn> {
+        self.handle.def_at(self.param)
+    }
+}
+
+
+// Internal types used:
+type Registry = SmallVec<[TypeNameInner; 4]>;
+type Params = SmallVec<[usize; 4]>;
+
+/// The internal representation of some type name.
 #[derive(Clone, Debug, PartialEq)]
-pub enum TypeName<'a> {
+pub enum TypeNameInner {
     /// Types like `Vec<T>`, `Foo` and `path::to::Bar<A,B>`, `i32`, `bool`
     /// etc are _named_ types.
     Named {
         /// The name of the type (eg Vec, i32, bool).
-        name: &'a str,
+        name: SmallString<[u8;16]>,
         /// Each of the generic parameters, if any, associated with the type.
-        params: Vec<TypeName<'a>>
+        params: Params,
     },
     /// Tuples like `()` and `(Foo, Bar<A>)` are _unnamed_ types.
     Unnamed {
         /// Each of the types in the tuple.
-        params: Vec<TypeName<'a>>
+        params: Params,
     },
     /// Fixed length arrays like `[Bar; 32]` are _array_ types.
     Array {
         /// The type in the array.
-        param: Box<TypeName<'a>>,
+        param: usize,
         /// The fixed length of the array.
         length: usize
-    }
-}
-
-impl <'a> TypeName<'a> {
-    /// Parse an input string into a [`TypeName`].
-    pub fn parse(input: &'a str) -> Result<TypeName<'_>, ParseError> {
-        let mut tokens = input.into_tokens();
-        parse_type_name(&mut tokens)
-    }
-
-    /// Create a named [`TypeName`] with no parameters.
-    pub fn named(name: &'a str) -> TypeName<'a> {
-        TypeName::Named { name, params: Vec::new() }
-    }
-
-    /// Create a named [`TypeName`] with one parameter.
-    pub fn named_with_param(name: &'a str, param: TypeName<'a>) -> TypeName<'a> {
-        TypeName::Named { name, params: vec![param] }
-    }
-
-    /// Create a named [`TypeName`] with no parameters.
-    pub fn named_with_params(name: &'a str, params: Vec<TypeName<'a>>) -> TypeName<'a> {
-        TypeName::Named { name, params }
-    }
-
-    /// Create an unnamed/tuple [`TypeName`].
-    pub fn unnamed(params: Vec<TypeName<'a>>) -> TypeName<'a> {
-        TypeName::Unnamed { params }
-    }
-
-    /// Create an unnamed/tuple [`TypeName`].
-    pub fn array(param: impl Into<Box<TypeName<'a>>>, length: usize) -> TypeName<'a> {
-        TypeName::Array { param: param.into(), length }
     }
 }
 
@@ -94,22 +220,22 @@ pub enum ParseErrorKind {
     InvalidUnsignedInt
 }
 
-fn parse_type_name<'a>(input: &mut StrTokens<'a>) -> Result<TypeName<'a>, ParseError> {
+fn parse_type_name<'a>(input: &mut StrTokens<'a>, registry: &mut Registry) -> Result<(), ParseError> {
     let loc = input.location();
-    try_parse_type_name(input)
+    try_parse_type_name(input, registry)
         .unwrap_or_else(|| Err(ParseError::new_at(ParseErrorKind::InvalidTypeName, loc.offset())))
 }
 
-fn try_parse_type_name<'a>(input: &mut StrTokens<'a>) -> Option<Result<TypeName<'a>, ParseError>> {
+fn try_parse_type_name<'a>(input: &mut StrTokens<'a>, registry: &mut Registry) -> Option<Result<(), ParseError>> {
     yap::one_of!(input;
-        parse_unnamed_into_type_name(input),
-        parse_array_into_type_name(input),
-        parse_named_into_type_name(input),
+        parse_unnamed_into_type_name(input, registry),
+        parse_array_into_type_name(input, registry),
+        parse_named_into_type_name(input, registry),
     )
 }
 
 // Parse a named type like Vec<bool>, i32, bool, Foo.
-fn parse_named_into_type_name<'a>(input: &mut StrTokens<'a>) -> Option<Result<TypeName<'a>, ParseError>> {
+fn parse_named_into_type_name<'a>(input: &mut StrTokens<'a>, registry: &mut Registry) -> Option<Result<(), ParseError>> {
     if !input.peek()?.is_alphabetic() {
         return None
     }
@@ -121,11 +247,12 @@ fn parse_named_into_type_name<'a>(input: &mut StrTokens<'a>) -> Option<Result<Ty
 
     skip_whitespace(input);
     if !input.token('<') {
-        // No generics; return just the name:
-        return Some(Ok(TypeName::Named { name, params: Vec::new() }))
+        // No generics; just add the name to the registry
+        registry.push(TypeNameInner::Named { name: SmallString::from_str(name), params: Params::new() });
+        return Some(Ok(()))
     }
 
-    let params = match parse_comma_separated_type_names(input) {
+    let params = match parse_comma_separated_type_names(input, registry) {
         Ok(params) => params,
         Err(err) => return Some(Err(err))
     };
@@ -134,17 +261,18 @@ fn parse_named_into_type_name<'a>(input: &mut StrTokens<'a>) -> Option<Result<Ty
         let loc = input.location().offset();
         Some(Err(ParseError::new_at(ParseErrorKind::ClosingAngleBracketMissing, loc)))
     } else {
-        Some(Ok(TypeName::Named { name, params }))
+        registry.push(TypeNameInner::Named { name: SmallString::from_str(name), params });
+        Some(Ok(()))
     }
 }
 
 // Parse an unnamed (tuple) type like () or (bool, Foo, Bar<T>).
-fn parse_unnamed_into_type_name<'a>(input: &mut StrTokens<'a>) -> Option<Result<TypeName<'a>, ParseError>> {
+fn parse_unnamed_into_type_name<'a>(input: &mut StrTokens<'a>, registry: &mut Registry) -> Option<Result<(), ParseError>> {
     if !input.token('(') {
         return None
     }
 
-    let params = match parse_comma_separated_type_names(input) {
+    let params = match parse_comma_separated_type_names(input, registry) {
         Ok(params) => params,
         Err(err) => return Some(Err(err))
     };
@@ -153,19 +281,20 @@ fn parse_unnamed_into_type_name<'a>(input: &mut StrTokens<'a>) -> Option<Result<
         let loc = input.location().offset();
         Some(Err(ParseError::new_at(ParseErrorKind::ClosingParenMissing, loc)))
     } else {
-        Some(Ok(TypeName::Unnamed { params }))
+        registry.push(TypeNameInner::Unnamed { params });
+        Some(Ok(()))
     }
 }
 
 // Parse a fixed length array like [Foo; 32].
-fn parse_array_into_type_name<'a>(input: &mut StrTokens<'a>) -> Option<Result<TypeName<'a>, ParseError>> {
+fn parse_array_into_type_name<'a>(input: &mut StrTokens<'a>, registry: &mut Registry) -> Option<Result<(), ParseError>> {
     if !input.token('[') {
         return None
     }
 
     skip_whitespace(input);
-    let param = match parse_type_name(input) {
-        Ok(param) => param,
+    let param = match parse_type_name(input, registry) {
+        Ok(()) => registry.len() - 1,
         Err(e) => return Some(Err(e))
     };
 
@@ -183,25 +312,42 @@ fn parse_array_into_type_name<'a>(input: &mut StrTokens<'a>) -> Option<Result<Ty
         let loc = input.location().offset();
         Some(Err(ParseError::new_at(ParseErrorKind::ClosingSquareBracketMissing, loc)))
     } else {
-        Some(Ok(TypeName::Array { param: Box::new(param), length }))
+        registry.push(TypeNameInner::Array { param, length });
+        Some(Ok(()))
     }
 }
 
 // Parse a list of type names like Foo,Bar,usize. An empty list is allowed.
-fn parse_comma_separated_type_names<'a>(input: &mut StrTokens<'a>) -> Result<Vec<TypeName<'a>>, ParseError> {
+fn parse_comma_separated_type_names<'a>(input: &mut StrTokens<'a>, registry: &mut Registry) -> Result<Params, ParseError> {
     skip_whitespace(input);
-    let params = input.sep_by(
-        |toks| try_parse_type_name(toks),
+
+    let mut params_iter = input.sep_by(
+        |toks| {
+            // Try to parse a type name:
+            let res = try_parse_type_name(toks, registry)?;
+            // If successful, type name will be last item in registry:
+            Some(res.map(|()| registry.len() - 1))
+        },
         |toks| {
             toks.surrounded_by(
                 |toks| toks.token(','),
                 |toks| skip_whitespace(toks)
             )
         }
-    ).collect();
+    );
+
+    let mut params = Params::new();
+    for res in params_iter.as_iter() {
+        let idx = res?;
+        params.push(idx);
+    }
+
+    skip_whitespace(input);
+    // Allow trailing comma but don't mandate it (ie we don't check the bool).
+    input.token(',');
     skip_whitespace(input);
 
-    params
+    Ok(params)
 }
 
 // Skip over any whitespace, ignoring it.
@@ -225,89 +371,112 @@ where
 mod test {
     use super::*;
 
-    fn assert_parse(input: &str, type_name: TypeName<'_>) {
-        let tn = match TypeName::parse(input) {
+    fn expect_parse(input: &str) -> TypeName {
+        match TypeName::parse(input) {
             Ok(tn) => tn,
-            Err(e) => panic!("parsing '{input}' into {type_name:?} failed: {e}")
-        };
-
-        assert_eq!(tn, type_name, "parsing '{input}' into {type_name:?} failed: mismatch");
+            Err(e) => panic!("parsing '{input}' failed: {e}")
+        }
     }
 
     #[test]
-    fn parsing_named_types_works() {
-        assert_parse("Foo", TypeName::named("Foo"));
-        assert_parse("Foo<>", TypeName::named("Foo"));
-        assert_parse("Bar<u32>", TypeName::named_with_param("Bar", TypeName::named("u32")));
-        assert_parse(
-            "Bar<u32, Foo<bool>>",
-            TypeName::named_with_params(
-                "Bar",
-                vec![
-                    TypeName::named("u32"),
-                    TypeName::named_with_param("Foo", TypeName::named("bool"))
-                ]
-            )
-        );
-        assert_parse(
-            "Bar<u32,bool,   i64>",
-            TypeName::named_with_params(
-                "Bar",
-                vec![
-                    TypeName::named("u32"),
-                    TypeName::named("bool"),
-                    TypeName::named("i64"),
-                ]
-            )
-        );
+    fn parse_succeeds() {
+        expect_parse("()");
+        expect_parse("(Foo)"); // Prob don't need to allow this but hey.
+        expect_parse("(Foo,)");
+        expect_parse("(Foo, usize,    i32)");
+        expect_parse("(a,b,c,)");
+
+        expect_parse("Foo");
+        expect_parse("Foo<>");
+        expect_parse("Foo<A>");
+        expect_parse("Foo<A, b,   (), (Wibble)>");
+
+        expect_parse("[usize;32]");
+        expect_parse("[Foo<T,A,B> ;32]");
+        expect_parse("[bool;    32]");
     }
 
     #[test]
-    fn parsing_unnamed_tuple_types_works() {
-        assert_parse("()", TypeName::unnamed(vec![]));
-        assert_parse("(  )", TypeName::unnamed(vec![]));
-        assert_parse("(bool,    i32,Bar<Wibble>, ())", TypeName::unnamed(vec![
-            TypeName::named("bool"),
-            TypeName::named("i32"),
-            TypeName::named_with_param("Bar", TypeName::named("Wibble")),
-            TypeName::unnamed(vec![]),
-        ]));
+    #[should_panic]
+    fn parse_fails() {
+        // Numbers can't come first in identifiers.
+        expect_parse("3thing");
+        expect_parse("(bool,3)");
+
+        // Arrays need a number second.
+        expect_parse("[usize; Foo]");
+
+        // Brackets must be closed
+        expect_parse("(Foo, Bar");
+        expect_parse("[Foo; 32");
+        expect_parse("Foo<A, B");
     }
 
     #[test]
-    fn parsing_array_types_works() {
-        assert_parse("[Bar ;   10]", TypeName::array(TypeName::named("Bar"), 10));
-        assert_parse("[Bar;1]", TypeName::array(TypeName::named("Bar"), 1));
-        assert_parse(
-            "[Bar<Wibble>;1]",
-            TypeName::array(TypeName::named_with_param("Bar", TypeName::named("Wibble")), 1)
-        );
-        assert_parse("[u8;32]", TypeName::array(TypeName::named("u8"), 32));
+    fn parses_into_expected_shape() {
+        let tn = expect_parse("Foo");
+        let def = tn.def().unwrap_named();
+        assert!(def.name() == "Foo" && def.param_defs().count() == 0);
+
+        let tn = expect_parse("Foo<A>");
+        let def = tn.def().unwrap_named();
+        assert!(def.name() == "Foo" && def.param_defs().next().unwrap().unwrap_named().name() == "A");
+
+        let tn = expect_parse("()");
+        let def = tn.def().unwrap_unnamed();
+        assert!(def.param_defs().count() == 0);
+
+        let tn = expect_parse("(bool, u32, Bar<A>)");
+        let param_names: Vec<String> = tn.def()
+            .unwrap_unnamed()
+            .param_defs()
+            .map(|p| p.unwrap_named().name().to_owned())
+            .collect();
+        assert_eq!(param_names, vec!["bool", "u32", "Bar"]);
+
+        let tn = expect_parse("[Foo; 16]");
+        let def = tn.def().unwrap_array();
+        assert!(def.length() == 16 && def.param_def().unwrap_named().name() == "Foo");
     }
 
     #[test]
     fn parsing_complex_nested_type_works() {
-        assert_parse(
-            "Foo<(Option<Wibble<[(u8, Bar);12],Compact<()>>>,bool)>",
-            TypeName::named_with_param(
-                "Foo",
-                TypeName::unnamed(vec![
-                    TypeName::named_with_param(
-                        "Option",
-                        TypeName::named_with_params(
-                            "Wibble",
-                            vec![
-                                TypeName::array(
-                                    TypeName::unnamed(vec![TypeName::named("u8"), TypeName::named("Bar")]),
-                                    12
-                                ),
-                                TypeName::named_with_param("Compact", TypeName::unnamed(vec![]))
-                            ]
-                        )
-                    ),
-                    TypeName::named("bool")
-                ])
-            )
-        )
+        let tn = expect_parse("Foo<(Option<Wibble<[(u8, Bar);12],Compact<()>>>,bool)>");
+println!("SIZE {}", std::mem::size_of::<TypeNameInner>());
+println!("SIZE {}", std::mem::size_of::<TypeName>());
+        // Foo
+        let foo = tn.def().unwrap_named();
+        assert_eq!(foo.name(), "Foo");
+
+        // Foo<@...@>
+        let foo_params: Vec<_> = foo.param_defs().collect();
+        assert_eq!(foo_params.len(), 1);
+
+        // Foo<@(...)@>
+        let foo_tuple = foo_params[0].unwrap_unnamed();
+        assert_eq!(foo_tuple.param_defs().count(), 2);
+
+        // Foo<(@...@)>
+        let foo_tuple_params: Vec<_> = foo_tuple.param_defs().collect();
+        assert_eq!(foo_tuple_params.len(), 2);
+        assert_eq!(foo_tuple_params[0].unwrap_named().name(), "Option");
+        assert_eq!(foo_tuple_params[1].unwrap_named().name(), "bool");
+
+        // Foo<(Option<@...@>)>
+        let option_params: Vec<_> = foo_tuple_params[0].unwrap_named().param_defs().collect();
+        assert_eq!(option_params.len(), 1);
+
+        // Foo<(Option<@Wibble<..>@>)>
+        let wibble = option_params[0].unwrap_named();
+        assert_eq!(wibble.name(), "Wibble");
+
+        // Foo<(Option<Wibble<@..@>>)>
+        let wibble_params: Vec<_> = wibble.param_defs().collect();
+        assert_eq!(wibble_params.len(), 2);
+
+        // Foo<(Option<Wibble<@[(u8, Bar);12)]@>>)>
+        let arr = wibble_params[0].unwrap_array();
+        assert_eq!(arr.length(), 12);
+        assert_eq!(arr.param_def().unwrap_unnamed().param_defs().count(), 2);
     }
 }

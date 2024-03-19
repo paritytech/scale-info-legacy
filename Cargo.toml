@@ -15,4 +15,7 @@ include = ["Cargo.toml", "src/**/*.rs", "README.md", "LICENSE"]
 
 [dependencies]
 derive_more = { version = "0.99.17", default-features = false, features = ["display"] }
+scale-type-resolver = { version = "0.1.1", default-features = false }
+smallstr = "0.3.0"
+smallvec = "1.13.1"
 yap = "0.12.0"
