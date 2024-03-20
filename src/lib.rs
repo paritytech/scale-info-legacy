@@ -3,9 +3,9 @@
 
 #![deny(missing_docs)]
 
-mod type_name;
-mod type_desc;
-mod type_registry;
+pub mod type_name;
+pub mod type_desc;
+pub mod type_registry;
 
 /*
 Thouhgts:
@@ -34,8 +34,8 @@ Vec<(ParaId,Option<(CollatorId,Retriable)>)> => complex nested resolving
 // the right places, and then communicate what the output shape is via `scale-type-resolver` stuff.
 // When inserting types, _only_ generics are supported as params. Like defining types.
 
-registry.insert("Vec", Ty::SequenceOf(Ty::Param("T")))
-registry.insert("Foo", Ty::Struct(vec![ ("hello", Ty::Bool), ("other", Ty::Param("T")) ]))
+registry.insert("Vec<T>", Ty::SequenceOf(Ty::Param("T")))
+registry.insert("Foo<T>", Ty::Struct(vec![ ("hello", Ty::Bool), ("other", Ty::Param("T")) ]))
 registry.insert("MyEnum<T, S>", Ty::Enum(vec![ Variant::new("A", Ty::Bool).with_index(3), Variant::new("B", Ty::Param("T")), ... ]))
 registry.insert("BTreeMap<K,V>", Ty::SequenceOf(Ty::TupleOf(vec![Ty::Param("K"), Ty::Param("V")])))
 registry.insert("Compact<T>", Ty::Compact(Ty::Param("T")))

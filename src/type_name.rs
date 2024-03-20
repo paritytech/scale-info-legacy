@@ -161,6 +161,7 @@ impl <'tn> ArrayTypeName<'tn> {
 // Internal types used:
 type Registry = SmallVec<[TypeNameInner; 4]>;
 type Params = SmallVec<[usize; 4]>;
+type Name = SmallString<[u8;16]>;
 
 /// The internal representation of some type name.
 #[derive(Clone, Debug, PartialEq)]
@@ -169,7 +170,7 @@ pub enum TypeNameInner {
     /// etc are _named_ types.
     Named {
         /// The name of the type (eg Vec, i32, bool).
-        name: SmallString<[u8;16]>,
+        name: Name,
         /// Each of the generic parameters, if any, associated with the type.
         params: Params,
     },
@@ -236,19 +237,15 @@ fn try_parse_type_name<'a>(input: &mut StrTokens<'a>, registry: &mut Registry) -
 
 // Parse a named type like Vec<bool>, i32, bool, Foo.
 fn parse_named_into_type_name<'a>(input: &mut StrTokens<'a>, registry: &mut Registry) -> Option<Result<(), ParseError>> {
-    if !input.peek()?.is_alphabetic() {
+    let name = parse_path(input);
+    if name.is_empty() {
         return None
     }
-
-    let name = str_slice_from(
-        input,
-        |toks| { toks.skip_while(|c| c.is_alphanumeric()); }
-    );
 
     skip_whitespace(input);
     if !input.token('<') {
         // No generics; just add the name to the registry
-        registry.push(TypeNameInner::Named { name: SmallString::from_str(name), params: Params::new() });
+        registry.push(TypeNameInner::Named { name: Name::from_str(name), params: Params::new() });
         return Some(Ok(()))
     }
 
@@ -261,7 +258,7 @@ fn parse_named_into_type_name<'a>(input: &mut StrTokens<'a>, registry: &mut Regi
         let loc = input.location().offset();
         Some(Err(ParseError::new_at(ParseErrorKind::ClosingAngleBracketMissing, loc)))
     } else {
-        registry.push(TypeNameInner::Named { name: SmallString::from_str(name), params });
+        registry.push(TypeNameInner::Named { name: Name::from_str(name), params });
         Some(Ok(()))
     }
 }
@@ -350,6 +347,30 @@ fn parse_comma_separated_type_names<'a>(input: &mut StrTokens<'a>, registry: &mu
     Ok(params)
 }
 
+// Parse the name/path of a type like `Foo`` or `a::b::Foo`.
+fn parse_path<'a>(input: &mut StrTokens<'a>) -> &'a str {
+    str_slice_from(
+        input,
+        |toks| {
+            toks.sep_by(
+                |t| {
+                    // First char should exist and be a letter.
+                    if !t.peek()?.is_alphabetic() {
+                        return None
+                    }
+                    // Rest can be letters or numbers.
+                    t.skip_while(|c| c.is_alphanumeric());
+                    Some(())
+                },
+                |t| {
+                    // Our separator is `::`.
+                    t.tokens("::".chars())
+                }
+            ).consume();
+        }
+    )
+}
+
 // Skip over any whitespace, ignoring it.
 fn skip_whitespace<'a>(input: &mut StrTokens<'a>) {
     input.skip_while(|t| t.is_whitespace());
@@ -379,6 +400,19 @@ mod test {
     }
 
     #[test]
+    fn parse_path_works() {
+        let paths = [
+            "a",
+            "a::b::c"
+        ];
+
+        for path in paths {
+            let mut input = path.into_tokens();
+            assert_eq!(parse_path(&mut input), path);
+        }
+    }
+
+    #[test]
     fn parse_succeeds() {
         expect_parse("()");
         expect_parse("(Foo)"); // Prob don't need to allow this but hey.
@@ -386,13 +420,14 @@ mod test {
         expect_parse("(Foo, usize,    i32)");
         expect_parse("(a,b,c,)");
 
+        expect_parse("path::to::Foo"); // paths should work.
         expect_parse("Foo");
         expect_parse("Foo<>");
         expect_parse("Foo<A>");
         expect_parse("Foo<A, b,   (), (Wibble)>");
 
         expect_parse("[usize;32]");
-        expect_parse("[Foo<T,A,B> ;32]");
+        expect_parse("[a::b::Foo<T,A,B> ;32]");
         expect_parse("[bool;    32]");
     }
 
@@ -442,8 +477,7 @@ mod test {
     #[test]
     fn parsing_complex_nested_type_works() {
         let tn = expect_parse("Foo<(Option<Wibble<[(u8, Bar);12],Compact<()>>>,bool)>");
-println!("SIZE {}", std::mem::size_of::<TypeNameInner>());
-println!("SIZE {}", std::mem::size_of::<TypeName>());
+
         // Foo
         let foo = tn.def().unwrap_named();
         assert_eq!(foo.name(), "Foo");
