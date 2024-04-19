@@ -3,8 +3,9 @@
 
 #![deny(missing_docs)]
 
-pub mod type_name;
-pub mod type_desc;
+pub mod ty;
+pub mod ty_name;
+pub mod ty_desc;
 pub mod type_registry;
 
 /*

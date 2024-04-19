@@ -1,4 +1,4 @@
-//! This module provides a [`TypeName`], which can be parsed from a string via [`TypeName::parse`]
+//! This module provides a [`TyName`], which can be parsed from a string via [`TyName::parse`]
 //! and represents the name of a type.
 
 use yap::{types::StrTokens, IntoTokens, TokenLocation, Tokens};
@@ -6,20 +6,20 @@ use smallvec::SmallVec;
 use smallstr::SmallString;
 
 /// An opaque representation of a type ID. This can be parsed from
-/// a string via [`TypeName::parse()`],
+/// a string via [`TyName::parse()`],
 #[derive(Debug,Clone)]
-pub struct TypeName {
+pub struct TyName {
     registry: Registry,
     idx: usize,
 }
 
 // We only implement this because `scale_type_resolver::TypeResolver` requires
 // type IDs to impl Default.
-impl Default for TypeName {
+impl Default for TyName {
     fn default() -> Self {
         // Various methods expect the registry to have at least one type in it,
         // so we set the type to be the empty unit type.
-        let unit_type = TypeNameInner::Unnamed { params: Params::new() };
+        let unit_type = TyNameInner::Unnamed { params: Params::new() };
         Self {
             registry: Registry::from_iter([unit_type]),
             idx: 0,
@@ -27,15 +27,28 @@ impl Default for TypeName {
     }
 }
 
-impl TypeName {
-    /// Parse an input string into a [`TypeName`].
-    pub fn parse(input: &str) -> Result<TypeName, ParseError> {
+impl core::str::FromStr for TyName {
+    type Err = ParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s)
+    }
+}
+
+impl TyName {
+    /// Parse an input string into a [`TyName`]. Panics if the input
+    /// can not be parsed into a valid [`TyName`].
+    pub fn parse_unwrap(input: &str) -> TyName {
+        Self::parse(input).unwrap()
+    }
+
+    /// Parse an input string into a [`TyName`].
+    pub fn parse(input: &str) -> Result<TyName, ParseError> {
         let mut tokens = input.into_tokens();
         let mut registry = Registry::new();
 
         parse_type_name(&mut tokens, &mut registry)?;
 
-        Ok(TypeName {
+        Ok(TyName {
             // Registry must have at least 1 item in, and the last item
             // we added is always the outermost one we want to point to.
             idx: registry.len() - 1,
@@ -45,12 +58,12 @@ impl TypeName {
 
     /// Substitute a named type with another. This is useful if we have a type name
     /// like `Vec<T>` and want to turn it into a concrete type like `Vec<u32>`.
-    pub(crate) fn with_substitution<'other>(mut self, ident: &str, replacement: TypeNameDef<'other>) -> TypeName {
+    pub(crate) fn with_substitution<'other>(mut self, ident: &str, replacement: TyNameDef<'other>) -> TyName {
         // These are all of the indexes we'll want to swap for something else:
         let indexes_to_replace: SmallVec<[_;2]> = self.registry
             .iter()
             .enumerate()
-            .filter(|(_, ty)| matches!(ty, TypeNameInner::Named { name, params } if params.is_empty() && name == ident))
+            .filter(|(_, ty)| matches!(ty, TyNameInner::Named { name, params } if params.is_empty() && name == ident))
             .map(|(idx,_)| idx)
             .collect();
 
@@ -77,29 +90,29 @@ impl TypeName {
         // Update any types pointing to one of the `indexes_to_replace` to point to this new one.
         for inner in self.registry.iter_mut() {
             match inner {
-                TypeNameInner::Named { params, .. } => update_params(params),
-                TypeNameInner::Unnamed { params } => update_params(params),
-                TypeNameInner::Array { param, .. } => update_param(param),
+                TyNameInner::Named { params, .. } => update_params(params),
+                TyNameInner::Unnamed { params } => update_params(params),
+                TyNameInner::Array { param, .. } => update_param(param),
             }
         }
 
-        // If the TypeName index itself needs updating, also do this:
+        // If the TyName index itself needs updating, also do this:
         update_param(&mut self.idx);
 
         self
     }
 
     /// Fetch the definition of this type.
-    pub(crate) fn def<'tn>(&'tn self) -> TypeNameDef<'tn> {
+    pub(crate) fn def<'tn>(&'tn self) -> TyNameDef<'tn> {
         self.def_at(self.idx)
     }
 
-    /// Insert a foreign `TypeNameDef` into this type's registry, returning the index that it was inserted at.
-    fn insert_def(&mut self, ty: TypeNameDef<'_>) -> usize {
+    /// Insert a foreign `TyNameDef` into this type's registry, returning the index that it was inserted at.
+    fn insert_def(&mut self, ty: TyNameDef<'_>) -> usize {
         let (idx, registry) = match ty {
-            TypeNameDef::Named(t) => (t.idx, &t.handle.registry),
-            TypeNameDef::Unnamed(t) => (t.idx, &t.handle.registry),
-            TypeNameDef::Array(t) => (t.idx, &t.handle.registry),
+            TyNameDef::Named(t) => (t.idx, &t.handle.registry),
+            TyNameDef::Unnamed(t) => (t.idx, &t.handle.registry),
+            TyNameDef::Array(t) => (t.idx, &t.handle.registry),
         };
 
         self.insert_entry_from_other_registry(idx, registry)
@@ -109,17 +122,17 @@ impl TypeName {
     /// returning the index at which the given entry ended up.
     fn insert_entry_from_other_registry(&mut self, idx: usize, registry: &Registry) -> usize {
         let new_inner = match &registry.get(idx).expect("type index used which doesn't exist") {
-            TypeNameInner::Named { name, params } => {
+            TyNameInner::Named { name, params } => {
                 let new_params = params.iter().map(|idx: &usize| self.insert_entry_from_other_registry(*idx, registry)).collect();
-                TypeNameInner::Named { name: name.clone(), params: new_params }
+                TyNameInner::Named { name: name.clone(), params: new_params }
             },
-            TypeNameInner::Unnamed { params } => {
+            TyNameInner::Unnamed { params } => {
                 let new_params = params.iter().map(|idx: &usize| self.insert_entry_from_other_registry(*idx, registry)).collect();
-                TypeNameInner::Unnamed { params: new_params }
+                TyNameInner::Unnamed { params: new_params }
             },
-            TypeNameInner::Array { param, length } => {
+            TyNameInner::Array { param, length } => {
                 let new_param = self.insert_entry_from_other_registry(*param, registry);
-                TypeNameInner::Array { param: new_param, length: *length }
+                TyNameInner::Array { param: new_param, length: *length }
             },
         };
 
@@ -129,29 +142,29 @@ impl TypeName {
     }
 
     // Fetch (and expect to exist) a definition at some index.
-    fn def_at<'tn>(&'tn self, idx: usize) -> TypeNameDef<'tn> {
+    fn def_at<'tn>(&'tn self, idx: usize) -> TyNameDef<'tn> {
         let entry = self.registry
             .get(idx)
-            .expect("one item expected in TypeName");
+            .expect("one item expected in TyName");
 
         match entry {
-            TypeNameInner::Named { name, params } => {
-                TypeNameDef::Named(NamedTypeName {
+            TyNameInner::Named { name, params } => {
+                TyNameDef::Named(NamedTyName {
                     name,
                     params,
                     idx,
                     handle: self
                 })
             },
-            TypeNameInner::Unnamed { params } => {
-                TypeNameDef::Unnamed(UnnamedTypeName {
+            TyNameInner::Unnamed { params } => {
+                TyNameDef::Unnamed(UnnamedTyName {
                     params,
                     idx,
                     handle: self
                 })
             },
-            TypeNameInner::Array { param, length } => {
-                TypeNameDef::Array(ArrayTypeName {
+            TyNameInner::Array { param, length } => {
+                TyNameDef::Array(ArrayTyName {
                     param: *param,
                     length: *length,
                     idx,
@@ -164,64 +177,64 @@ impl TypeName {
 
 /// The definition of some type.
 #[derive(Debug,Copy,Clone)]
-pub enum TypeNameDef<'tn> {
+pub enum TyNameDef<'tn> {
     /// Types like `Vec<T>`, `Foo` and `path::to::Bar<A,B>`, `i32`, `bool`
     /// etc are _named_ types.
-    Named(NamedTypeName<'tn>),
+    Named(NamedTyName<'tn>),
     /// Tuples like `()` and `(Foo, Bar<A>)` are _unnamed_ types.
-    Unnamed(UnnamedTypeName<'tn>),
+    Unnamed(UnnamedTyName<'tn>),
     /// Fixed length arrays like `[Bar; 32]` are _array_ types.
-    Array(ArrayTypeName<'tn>),
+    Array(ArrayTyName<'tn>),
 }
 
-impl <'tn> TypeNameDef<'tn> {
-    /// Convert this back into a [`TypeName`].
-    pub fn into_type_name(self) -> TypeName {
+impl <'tn> TyNameDef<'tn> {
+    /// Convert this back into a [`TyName`].
+    pub fn into_type_name(self) -> TyName {
         match self {
-            TypeNameDef::Named(v) => v.into_type_name(),
-            TypeNameDef::Unnamed(v) => v.into_type_name(),
-            TypeNameDef::Array(v) => v.into_type_name(),
+            TyNameDef::Named(v) => v.into_type_name(),
+            TyNameDef::Unnamed(v) => v.into_type_name(),
+            TyNameDef::Array(v) => v.into_type_name(),
         }
     }
 
     #[cfg(test)]
-    fn unwrap_named(self) -> NamedTypeName<'tn> {
+    fn unwrap_named(self) -> NamedTyName<'tn> {
         match self {
-            TypeNameDef::Named(a) => a,
-            _ => panic!("Cannot unwrap '{self:?}' into an NamedTypeName")
+            TyNameDef::Named(a) => a,
+            _ => panic!("Cannot unwrap '{self:?}' into an NamedTyName")
         }
     }
 
     #[cfg(test)]
-    fn unwrap_unnamed(self) -> UnnamedTypeName<'tn> {
+    fn unwrap_unnamed(self) -> UnnamedTyName<'tn> {
         match self {
-            TypeNameDef::Unnamed(a) => a,
-            _ => panic!("Cannot unwrap '{self:?}' into an UnnamedTypeName")
+            TyNameDef::Unnamed(a) => a,
+            _ => panic!("Cannot unwrap '{self:?}' into an UnnamedTyName")
         }
     }
 
     #[cfg(test)]
-    fn unwrap_array(self) -> ArrayTypeName<'tn> {
+    fn unwrap_array(self) -> ArrayTyName<'tn> {
         match self {
-            TypeNameDef::Array(a) => a,
-            _ => panic!("Cannot unwrap '{self:?}' into an ArrayTypeName")
+            TyNameDef::Array(a) => a,
+            _ => panic!("Cannot unwrap '{self:?}' into an ArrayTyName")
         }
     }
 }
 
 /// The definition of a named type.
 #[derive(Debug,Copy,Clone)]
-pub struct NamedTypeName<'tn> {
+pub struct NamedTyName<'tn> {
     name: &'tn str,
     params: &'tn Params,
-    handle: &'tn TypeName,
+    handle: &'tn TyName,
     idx: usize,
 }
 
-impl <'tn> NamedTypeName<'tn> {
-    /// Convert this back into a [`TypeName`].
-    pub fn into_type_name(self) -> TypeName {
-        TypeName {
+impl <'tn> NamedTyName<'tn> {
+    /// Convert this back into a [`TyName`].
+    pub fn into_type_name(self) -> TyName {
+        TyName {
             registry: self.handle.registry.clone(),
             idx: self.idx
         }
@@ -233,7 +246,7 @@ impl <'tn> NamedTypeName<'tn> {
     }
 
     /// Iterate over the type parameter definitions.
-    pub fn param_defs(&self) -> impl Iterator<Item=TypeNameDef<'tn>> {
+    pub fn param_defs(&self) -> impl Iterator<Item=TyNameDef<'tn>> {
         let handle = self.handle;
         self.params.iter().map(|idx| handle.def_at(*idx))
     }
@@ -241,23 +254,23 @@ impl <'tn> NamedTypeName<'tn> {
 
 /// The definition of an unnamed type.
 #[derive(Debug,Copy,Clone)]
-pub struct UnnamedTypeName<'tn> {
+pub struct UnnamedTyName<'tn> {
     params: &'tn Params,
-    handle: &'tn TypeName,
+    handle: &'tn TyName,
     idx: usize,
 }
 
-impl <'tn, 'a> UnnamedTypeName<'tn> {
-    /// Convert this back into a [`TypeName`].
-    pub fn into_type_name(self) -> TypeName {
-        TypeName {
+impl <'tn, 'a> UnnamedTyName<'tn> {
+    /// Convert this back into a [`TyName`].
+    pub fn into_type_name(self) -> TyName {
+        TyName {
             registry: self.handle.registry.clone(),
             idx: self.idx
         }
     }
 
     /// Iterate over the type parameter definitions
-    pub fn param_defs(&self) -> impl Iterator<Item=TypeNameDef<'tn>> {
+    pub fn param_defs(&self) -> impl ExactSizeIterator<Item=TyNameDef<'tn>> {
         let handle = self.handle;
         self.params.iter().map(|idx| handle.def_at(*idx))
     }
@@ -266,17 +279,17 @@ impl <'tn, 'a> UnnamedTypeName<'tn> {
 
 /// The definition of an array type.
 #[derive(Debug,Copy,Clone)]
-pub struct ArrayTypeName<'tn> {
+pub struct ArrayTyName<'tn> {
     param: usize,
     length: usize,
-    handle: &'tn TypeName,
+    handle: &'tn TyName,
     idx: usize,
 }
 
-impl <'tn> ArrayTypeName<'tn> {
-    /// Convert this back into a [`TypeName`].
-    pub fn into_type_name(self) -> TypeName {
-        TypeName {
+impl <'tn> ArrayTyName<'tn> {
+    /// Convert this back into a [`TyName`].
+    pub fn into_type_name(self) -> TyName {
+        TyName {
             registry: self.handle.registry.clone(),
             idx: self.idx
         }
@@ -287,20 +300,20 @@ impl <'tn> ArrayTypeName<'tn> {
         self.length
     }
     /// The array type parameter.
-    pub fn param_def(&self) -> TypeNameDef<'tn> {
+    pub fn param_def(&self) -> TyNameDef<'tn> {
         self.handle.def_at(self.param)
     }
 }
 
 
 // Internal types used:
-type Registry = SmallVec<[TypeNameInner; 2]>;
+type Registry = SmallVec<[TyNameInner; 2]>;
 type Params = SmallVec<[usize; 2]>;
 type Name = SmallString<[u8; 16]>;
 
 /// The internal representation of some type name.
 #[derive(Clone, Debug, PartialEq)]
-pub enum TypeNameInner {
+pub enum TyNameInner {
     /// Types like `Vec<T>`, `Foo` and `path::to::Bar<A,B>`, `i32`, `bool`
     /// etc are _named_ types.
     Named {
@@ -323,7 +336,7 @@ pub enum TypeNameInner {
     }
 }
 
-/// An error that can be emitted as the result of trying to parse a string into a [`TypeName`].
+/// An error that can be emitted as the result of trying to parse a string into a [`TyName`].
 #[derive(Debug, derive_more::Display)]
 #[display(fmt = "Error parsing string into type name at character {loc}: {err}")]
 pub struct ParseError {
@@ -340,12 +353,12 @@ impl ParseError {
     }
 }
 
-/// The kind of error that happened attempting to parse a string into a [`TypeName`].
+/// The kind of error that happened attempting to parse a string into a [`TyName`].
 #[allow(missing_docs)]
 #[derive(Debug, derive_more::Display)]
 pub enum ParseErrorKind {
     #[display(fmt = "The string did not look like a type name at all.")]
-    InvalidTypeName,
+    InvalidTyName,
     #[display(fmt = "A closing `)` was missing when attempting to parse a tuple type name.")]
     ClosingParenMissing,
     #[display(fmt = "A closing `>` was missing when attempting to parse the generics of a named type.")]
@@ -359,7 +372,7 @@ pub enum ParseErrorKind {
 fn parse_type_name<'a>(input: &mut StrTokens<'a>, registry: &mut Registry) -> Result<(), ParseError> {
     let loc = input.location();
     try_parse_type_name(input, registry)
-        .unwrap_or_else(|| Err(ParseError::new_at(ParseErrorKind::InvalidTypeName, loc.offset())))
+        .unwrap_or_else(|| Err(ParseError::new_at(ParseErrorKind::InvalidTyName, loc.offset())))
 }
 
 fn try_parse_type_name<'a>(input: &mut StrTokens<'a>, registry: &mut Registry) -> Option<Result<(), ParseError>> {
@@ -380,7 +393,7 @@ fn parse_named_into_type_name<'a>(input: &mut StrTokens<'a>, registry: &mut Regi
     skip_whitespace(input);
     if !input.token('<') {
         // No generics; just add the name to the registry
-        registry.push(TypeNameInner::Named { name: Name::from_str(name), params: Params::new() });
+        registry.push(TyNameInner::Named { name: Name::from_str(name), params: Params::new() });
         return Some(Ok(()))
     }
 
@@ -393,7 +406,7 @@ fn parse_named_into_type_name<'a>(input: &mut StrTokens<'a>, registry: &mut Regi
         let loc = input.location().offset();
         Some(Err(ParseError::new_at(ParseErrorKind::ClosingAngleBracketMissing, loc)))
     } else {
-        registry.push(TypeNameInner::Named { name: Name::from_str(name), params });
+        registry.push(TyNameInner::Named { name: Name::from_str(name), params });
         Some(Ok(()))
     }
 }
@@ -413,7 +426,7 @@ fn parse_unnamed_into_type_name<'a>(input: &mut StrTokens<'a>, registry: &mut Re
         let loc = input.location().offset();
         Some(Err(ParseError::new_at(ParseErrorKind::ClosingParenMissing, loc)))
     } else {
-        registry.push(TypeNameInner::Unnamed { params });
+        registry.push(TyNameInner::Unnamed { params });
         Some(Ok(()))
     }
 }
@@ -444,7 +457,7 @@ fn parse_array_into_type_name<'a>(input: &mut StrTokens<'a>, registry: &mut Regi
         let loc = input.location().offset();
         Some(Err(ParseError::new_at(ParseErrorKind::ClosingSquareBracketMissing, loc)))
     } else {
-        registry.push(TypeNameInner::Array { param, length });
+        registry.push(TyNameInner::Array { param, length });
         Some(Ok(()))
     }
 }
@@ -527,8 +540,8 @@ where
 mod test {
     use super::*;
 
-    fn expect_parse(input: &str) -> TypeName {
-        match TypeName::parse(input) {
+    fn expect_parse(input: &str) -> TyName {
+        match TyName::parse(input) {
             Ok(tn) => tn,
             Err(e) => panic!("parsing '{input}' failed: {e}")
         }
