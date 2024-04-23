@@ -287,6 +287,10 @@ impl <'a> TypeResolver for TypeRegistry {
     }
 }
 
+// Dev note: this (and the store_visitor below) must be in a separate fn and not in-line so
+// that the compiler can generate one exact type for the visitor. If it was written in line,
+// you'd hit a recursion limit because each creation of the visitor would have a unique type,
+// which is then passed into `.resolve()` requiring unique codegen, recursively.
 fn order_visitor<'resolver>() -> impl scale_type_resolver::ResolvedTypeVisitor<'resolver, TypeId = TyName, Value = Option<BitsOrderFormat>> {
     scale_type_resolver::visitor::new((), |_, _| None)
         .visit_composite(|_, path, _| {
