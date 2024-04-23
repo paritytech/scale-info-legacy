@@ -5,14 +5,16 @@ use std::collections::HashMap;
 use std::iter::ExactSizeIterator;
 use smallvec::SmallVec;
 use crate::ty_desc::{ self, TyDesc, VariantDesc, Primitive };
-use crate::ty_name::{ TyName, TyNameDef };
+use crate::ty_name::{ self, TyName, TyNameDef };
 use crate::ty::Ty;
 use scale_type_resolver::{BitsOrderFormat, BitsStoreFormat, Field, ResolvedTypeVisitor, TypeResolver, Variant};
 
 /// An error resolving types.
 #[allow(missing_docs)]
-#[derive(Debug,derive_more::Display)]
+#[derive(Debug,Clone,PartialEq,Eq,derive_more::Display)]
 pub enum TypeRegistryResolveError {
+    #[display(fmt = "'{_0}' is not a valid type name: {_1}")]
+    TypeNameInvalid(String, ty_name::ParseError),
     #[display(fmt = "Type '{_0}' not found")]
     TypeNotFound(String),
     #[display(fmt = "Wrong number of params provided for {type_name}: expected {expected_params} but got {provided_params}")]
@@ -51,7 +53,7 @@ impl TypeRegistry {
         TypeRegistry { types: HashMap::new() }
     }
 
-    /// Create a new [`TypeRegistry`] that's prepopulated with built-in rust types.
+    /// Create a new [`TypeRegistry`] that's pre-populated with built-in rust types.
     pub fn basic() -> Self {
         let mut registry = TypeRegistry::empty();
 
@@ -139,6 +141,19 @@ impl TypeRegistry {
         type_id: TyName,
         visitor: V,
     ) -> Result<V::Value, TypeRegistryResolveError> {
+        self.resolve_type(type_id, visitor)
+    }
+
+    /// Resolve some type information by providing the string name of the type,
+    /// and a `visitor` which will be called in order to describe how to decode it.
+    pub fn resolve_str<'this, V: ResolvedTypeVisitor<'this, TypeId = TyName>>(
+        &'this self,
+        type_name_str: &str,
+        visitor: V,
+    ) -> Result<V::Value, TypeRegistryResolveError> {
+        let type_id = TyName::parse(type_name_str).map_err(|e| {
+            TypeRegistryResolveError::TypeNameInvalid(type_name_str.to_owned(), e)
+        })?;
         self.resolve_type(type_id, visitor)
     }
 }
@@ -233,40 +248,18 @@ impl <'a> TypeResolver for TypeRegistry {
                         Ok(visitor.visit_sequence(path_iter, type_id))
                     },
                     TyDesc::BitSequence { order, store } => {
-                        let order_visitor = scale_type_resolver::visitor::new((), |_, _| None)
-                            .visit_composite(|_, path, _| {
-                                // use the path to determine whether this is the Lsb0 or Msb0
-                                // ordering type we're looking for, returning None if not.
-                                if path.next()? != "bitvec" { return None }
-                                if path.next()? != "order" { return None }
+                        let order = apply_param_mapping(order.clone(), &param_mapping);
+                        let store = apply_param_mapping(store.clone(), &param_mapping);
 
-                                let ident = path.next()?;
-                                if ident == "Lsb0" {
-                                    Some(BitsOrderFormat::Lsb0)
-                                } else if ident == "Msb0" {
-                                    Some(BitsOrderFormat::Msb0)
-                                } else {
-                                    None
-                                }
-                            });
-                        let store_visitor = scale_type_resolver::visitor::new((), |_, _| None)
-                            .visit_primitive(|_, p| {
-                                // use the primitive type to pick the correct bit store format.
-                                match p {
-                                    Primitive::U8 => Some(BitsStoreFormat::U8),
-                                    Primitive::U16 => Some(BitsStoreFormat::U16),
-                                    Primitive::U32 => Some(BitsStoreFormat::U32),
-                                    Primitive::U64 => Some(BitsStoreFormat::U64),
-                                    _ => None
-                                }
-                            });
+                        let order_visitor = order_visitor();
+                        let store_visitor = store_visitor();
 
-                        let order = self.resolve(order.clone(), order_visitor)?
+                        let order_format = self.resolve(order, order_visitor)?
                             .ok_or(TypeRegistryResolveError::UnexpectedBitOrderType)?;
-                        let store = self.resolve(store.clone(), store_visitor)?
+                        let store_format = self.resolve(store, store_visitor)?
                             .ok_or(TypeRegistryResolveError::UnexpectedBitStoreType)?;
 
-                        Ok(visitor.visit_bit_sequence(store, order))
+                        Ok(visitor.visit_bit_sequence(store_format, order_format))
                     },
                     TyDesc::Compact(ty) => {
                         let type_id = apply_param_mapping(ty.clone(), &param_mapping);
@@ -287,11 +280,44 @@ impl <'a> TypeResolver for TypeRegistry {
             },
             TyNameDef::Array(ty) => {
                 let len = ty.length();
-                let type_id = ty.into_type_name();
+                let type_id = ty.param_def().into_type_name();
                 Ok(visitor.visit_array(type_id, len))
             },
         }
     }
+}
+
+fn order_visitor<'resolver>() -> impl scale_type_resolver::ResolvedTypeVisitor<'resolver, TypeId = TyName, Value = Option<BitsOrderFormat>> {
+    scale_type_resolver::visitor::new((), |_, _| None)
+        .visit_composite(|_, path, _| {
+            // use the path to determine whether this is the Lsb0 or Msb0
+            // ordering type we're looking for, returning None if not.
+            if path.next()? != "bitvec" { return None }
+            if path.next()? != "order" { return None }
+
+            let ident = path.next()?;
+            if ident == "Lsb0" {
+                Some(BitsOrderFormat::Lsb0)
+            } else if ident == "Msb0" {
+                Some(BitsOrderFormat::Msb0)
+            } else {
+                None
+            }
+        })
+}
+
+fn store_visitor<'resolver>() -> impl scale_type_resolver::ResolvedTypeVisitor<'resolver, TypeId = TyName, Value = Option<BitsStoreFormat>> {
+    scale_type_resolver::visitor::new((), |_, _| None)
+        .visit_primitive(|_, p| {
+            // use the primitive type to pick the correct bit store format.
+            match p {
+                Primitive::U8 => Some(BitsStoreFormat::U8),
+                Primitive::U16 => Some(BitsStoreFormat::U16),
+                Primitive::U32 => Some(BitsStoreFormat::U32),
+                Primitive::U64 => Some(BitsStoreFormat::U64),
+                _ => None
+            }
+        })
 }
 
 /// Takes a TypeName and a mapping from generic ident to new defs, and returns a new TypeName where
@@ -324,40 +350,138 @@ impl <Item, A: ExactSizeIterator<Item=Item>, B: ExactSizeIterator<Item=Item>> Ex
     }
 }
 
-/*
-types: {
-    "Vec" => TypeInfo {
-        params: ["T"]
-        desc: SequenceOf("T")
-    },
+#[cfg(test)]
+mod test {
+    use super::*;
 
-    "Foo" => TypeInfo {
-        params: ["A", "B"],
-        desc: StructOf {[
-            "a": "Vec<A>",
-            "b": "u32",
-            "c": "(A, B)"
-        ]}
-    },
+    fn to_resolved_info(type_id: TyName, types: &TypeRegistry) -> ResolvedTypeInfo {
+        use scale_type_resolver::visitor;
 
-    "u32": Primitive::u32,
+        // Build a quick visitor which turns resolved type info
+        // into a concrete type for us to check.
+        let visitor = visitor::new((), |_, _| panic!("all methods implemented"))
+            .visit_not_found(|_| ResolvedTypeInfo::NotFound)
+            .visit_composite(|_, _, fields| {
+                let fs = fields
+                    .map(|f| {
+                        let inner_ty = to_resolved_info(f.id, types);
+                        (f.name.map(|n| n.to_owned()), inner_ty)
+                    })
+                    .collect();
+                ResolvedTypeInfo::CompositeOf(fs)
+            })
+            .visit_variant(|_, _, variants| {
+                let vs = variants
+                    .map(|v| {
+                        let fs: Vec<_> = v
+                            .fields
+                            .map(|f| {
+                                let inner_ty = to_resolved_info(f.id, types);
+                                (f.name.map(|n| n.to_owned()), inner_ty)
+                            })
+                            .collect();
+                        (v.name.to_owned(), fs)
+                    })
+                    .collect();
+                ResolvedTypeInfo::VariantOf(vs)
+            })
+            .visit_sequence(|_, _, type_id| {
+                ResolvedTypeInfo::SequenceOf(Box::new(to_resolved_info(type_id, types)))
+            })
+            .visit_array(|_, type_id, len| {
+                ResolvedTypeInfo::ArrayOf(Box::new(to_resolved_info(type_id, types)), len)
+            })
+            .visit_tuple(|_, type_ids| {
+                let ids = type_ids.map(|id| to_resolved_info(id, types)).collect();
+                ResolvedTypeInfo::TupleOf(ids)
+            })
+            .visit_primitive(|_, primitive| ResolvedTypeInfo::Primitive(primitive))
+            .visit_compact(|_, type_id| {
+                ResolvedTypeInfo::Compact(Box::new(to_resolved_info(type_id, types)))
+            })
+            .visit_bit_sequence(|_, store_format, order_format| {
+                ResolvedTypeInfo::BitSequence(store_format, order_format)
+            });
 
-    "Bar": TupleOf[ bool, String ]
+        match types.resolve(type_id, visitor) {
+            Err(e) => ResolvedTypeInfo::Err(e),
+            Ok(info) => info,
+        }
+    }
+
+    fn to_resolved_info_str(type_id_str: &str, types: &TypeRegistry) -> ResolvedTypeInfo {
+        let type_id = match TyName::parse(type_id_str) {
+            Ok(id) => id,
+            Err(e) => {
+                return ResolvedTypeInfo::Err(TypeRegistryResolveError::TypeNameInvalid(type_id_str.to_owned(), e));
+            }
+        };
+        to_resolved_info(type_id, types)
+    }
+
+    #[allow(clippy::type_complexity)]
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum ResolvedTypeInfo {
+        Err(TypeRegistryResolveError),
+        NotFound,
+        CompositeOf(Vec<(Option<String>, ResolvedTypeInfo)>),
+        VariantOf(Vec<(String, Vec<(Option<String>, ResolvedTypeInfo)>)>),
+        SequenceOf(Box<ResolvedTypeInfo>),
+        ArrayOf(Box<ResolvedTypeInfo>, usize),
+        TupleOf(Vec<ResolvedTypeInfo>),
+        Primitive(Primitive),
+        Compact(Box<ResolvedTypeInfo>),
+        BitSequence(BitsStoreFormat, BitsOrderFormat),
+    }
+
+    #[test]
+    fn resolve_basic_types() {
+        let types = TypeRegistry::basic();
+
+        let cases = [
+            ("bool", ResolvedTypeInfo::Primitive(Primitive::Bool)),
+            ("char", ResolvedTypeInfo::Primitive(Primitive::Char)),
+            ("String", ResolvedTypeInfo::Primitive(Primitive::Str)),
+            ("u8", ResolvedTypeInfo::Primitive(Primitive::U8)),
+            ("u16", ResolvedTypeInfo::Primitive(Primitive::U16)),
+            ("u32", ResolvedTypeInfo::Primitive(Primitive::U32)),
+            ("u64", ResolvedTypeInfo::Primitive(Primitive::U64)),
+            ("u128", ResolvedTypeInfo::Primitive(Primitive::U128)),
+            ("i8", ResolvedTypeInfo::Primitive(Primitive::I8)),
+            ("i16", ResolvedTypeInfo::Primitive(Primitive::I16)),
+            ("i32", ResolvedTypeInfo::Primitive(Primitive::I32)),
+            ("i64", ResolvedTypeInfo::Primitive(Primitive::I64)),
+            ("i128", ResolvedTypeInfo::Primitive(Primitive::I128)),
+            ("Vec<bool>", ResolvedTypeInfo::SequenceOf(Box::new(ResolvedTypeInfo::Primitive(Primitive::Bool)))),
+            ("Box<bool>", ResolvedTypeInfo::Primitive(Primitive::Bool)),
+            ("Arc<bool>", ResolvedTypeInfo::Primitive(Primitive::Bool)),
+            ("Rc<bool>", ResolvedTypeInfo::Primitive(Primitive::Bool)),
+            ("[String; 32]", ResolvedTypeInfo::ArrayOf(Box::new(ResolvedTypeInfo::Primitive(Primitive::Str)), 32)),
+            ("(bool, u32, Vec<String>)", ResolvedTypeInfo::TupleOf(vec![
+                ResolvedTypeInfo::Primitive(Primitive::Bool),
+                ResolvedTypeInfo::Primitive(Primitive::U32),
+                ResolvedTypeInfo::SequenceOf(Box::new(ResolvedTypeInfo::Primitive(Primitive::Str))),
+            ])),
+            ("bitvec::vec::BitVec<u8, bitvec::order::Msb0>", ResolvedTypeInfo::BitSequence(BitsStoreFormat::U8, BitsOrderFormat::Msb0)),
+            ("bitvec::vec::BitVec<u16, bitvec::order::Msb0>", ResolvedTypeInfo::BitSequence(BitsStoreFormat::U16, BitsOrderFormat::Msb0)),
+            ("bitvec::vec::BitVec<u32, bitvec::order::Msb0>", ResolvedTypeInfo::BitSequence(BitsStoreFormat::U32, BitsOrderFormat::Msb0)),
+            ("bitvec::vec::BitVec<u64, bitvec::order::Msb0>", ResolvedTypeInfo::BitSequence(BitsStoreFormat::U64, BitsOrderFormat::Msb0)),
+            ("bitvec::vec::BitVec<u8, bitvec::order::Lsb0>", ResolvedTypeInfo::BitSequence(BitsStoreFormat::U8, BitsOrderFormat::Lsb0)),
+            ("bitvec::vec::BitVec<u16, bitvec::order::Lsb0>", ResolvedTypeInfo::BitSequence(BitsStoreFormat::U16, BitsOrderFormat::Lsb0)),
+            ("bitvec::vec::BitVec<u32, bitvec::order::Lsb0>", ResolvedTypeInfo::BitSequence(BitsStoreFormat::U32, BitsOrderFormat::Lsb0)),
+            ("bitvec::vec::BitVec<u64, bitvec::order::Lsb0>", ResolvedTypeInfo::BitSequence(BitsStoreFormat::U64, BitsOrderFormat::Lsb0)),
+            ("Option<char>", ResolvedTypeInfo::VariantOf(vec![
+                ("None".to_owned(), vec![]),
+                ("Some".to_owned(), vec![(None, ResolvedTypeInfo::Primitive(Primitive::Char))]),
+            ])),
+            ("Result<char, String>", ResolvedTypeInfo::VariantOf(vec![
+                ("Ok".to_owned(), vec![(None, ResolvedTypeInfo::Primitive(Primitive::Char))]),
+                ("Err".to_owned(), vec![(None, ResolvedTypeInfo::Primitive(Primitive::Str))]),
+            ]))
+        ];
+
+        for (name, expected) in cases.into_iter() {
+            assert_eq!(to_resolved_info_str(name, &types), expected);
+        }
+    }
 }
-
-Foo<Bar<u32>> => ERROR: Foo has 2 params but only one provided.
-
-Foo<Bar<u32>, Vec<String>>:
-
-  Foo has 2 params A, B so:
-  param_mappings: { A => "Bar<u32>", B => "Vec<String>" }
-
-  Foo is struct so we need to return field names and TypeIds. Return:
-  - "a": "Vec<Bar<u32>>",
-  - "b": "u32",
-  - "c": "(Bar<u32>, Vec<String>)"
-
-  so we find types in the TypeName that match our generic params eg A, B and create a new
-  TypeName which substitutes those for some concrete types, to prepare for the next lookup.
-
-*/

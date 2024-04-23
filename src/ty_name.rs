@@ -27,6 +27,12 @@ impl Default for TyName {
     }
 }
 
+impl core::fmt::Display for TyName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.def())
+    }
+}
+
 impl core::str::FromStr for TyName {
     type Err = ParseError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -187,6 +193,46 @@ pub enum TyNameDef<'tn> {
     Array(ArrayTyName<'tn>),
 }
 
+impl <'a> core::fmt::Display for TyNameDef<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TyNameDef::Named(named) => {
+                write!(f, "{}", named.name())?;
+                if !named.params.is_empty() {
+                    write!(f, "<")?;
+                    let mut fst = true;
+                    for param in named.param_defs() {
+                        if !fst {
+                            write!(f, ", ")?;
+                        }
+                        fst = false;
+                        write!(f, "{}", param)?;
+                    }
+                    write!(f, ">")?;
+                }
+            },
+            TyNameDef::Unnamed(unnamed) => {
+                write!(f, "(")?;
+                if !unnamed.params.is_empty() {
+                    let mut fst = true;
+                    for param in unnamed.param_defs() {
+                        if !fst {
+                            write!(f, ", ")?;
+                        }
+                        fst = false;
+                        write!(f, "{}", param)?;
+                    }
+                }
+                write!(f, ")")?;
+            },
+            TyNameDef::Array(array) => {
+                write!(f, "[{}; {}]", array.param_def(), array.length())?;
+            },
+        }
+        Ok(())
+    }
+}
+
 impl <'tn> TyNameDef<'tn> {
     /// Convert this back into a [`TyName`].
     pub fn into_type_name(self) -> TyName {
@@ -337,7 +383,7 @@ pub enum TyNameInner {
 }
 
 /// An error that can be emitted as the result of trying to parse a string into a [`TyName`].
-#[derive(Debug, derive_more::Display)]
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 #[display(fmt = "Error parsing string into type name at character {loc}: {err}")]
 pub struct ParseError {
     /// Index into the string denoting the position of the error.
@@ -355,7 +401,7 @@ impl ParseError {
 
 /// The kind of error that happened attempting to parse a string into a [`TyName`].
 #[allow(missing_docs)]
-#[derive(Debug, derive_more::Display)]
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub enum ParseErrorKind {
     #[display(fmt = "The string did not look like a type name at all.")]
     InvalidTyName,
@@ -660,5 +706,25 @@ mod test {
         let arr = wibble_params[0].unwrap_array();
         assert_eq!(arr.length(), 12);
         assert_eq!(arr.param_def().unwrap_unnamed().param_defs().count(), 2);
+    }
+
+    #[test]
+    fn displaying_types_works() {
+        let ty_name_strs = [
+            "u32",
+            "Foo",
+            "Foo<T>",
+            "Foo<A, B, C>",
+            "[u8; 32]",
+            "[Foo<A>; 32]",
+            "()",
+            "(A, B, C)",
+            "Foo<(A, B, C<D>), [u8; 32], Bar<T>>"
+        ];
+
+        for ty_name_str in ty_name_strs {
+            let ty_name = TyName::parse_unwrap(ty_name_str);
+            assert_eq!(ty_name.to_string(), ty_name_str);
+        }
     }
 }
