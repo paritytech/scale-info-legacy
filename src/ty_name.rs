@@ -241,7 +241,7 @@ impl <'tn> NamedTyName<'tn> {
     }
 
     /// The type name.
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &'tn str {
         self.name
     }
 

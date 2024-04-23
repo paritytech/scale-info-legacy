@@ -2,6 +2,7 @@
 
 use smallvec::SmallVec;
 use crate::ty_desc::TyDesc;
+use crate::ty_name::{TyName, TyNameDef};
 
 /// A type to insert into the registry.
 pub struct Ty {
@@ -16,8 +17,31 @@ pub struct Ty {
 impl Ty {
     /// Create a [`Ty`] by providing a name like "Bar" or "Foo<A, B>" and a description of
     /// the shape of the type with this name.
-    pub fn new(name_with_params: impl AsRef<str>, shape: TyDesc) -> Result<Self, TyError> {
+    pub fn new(name_with_params: impl AsRef<str>, shape: TyDesc) -> Result<Self, ParseError> {
+        // The name we are looking for is just a restricted form of a ty_name, so we
+        // will just borrow that parsing logic and then check that we get the expected shape back:
+        let ty_name = TyName::parse(name_with_params.as_ref())
+            .map_err(|_| ParseError::InvalidTyName)?;
 
+        // We only accept named types like Foo<A, B> or path::to::Bar.
+        let TyNameDef::Named(named_ty) = ty_name.def() else {
+            return Err(ParseError::ExpectingNamedType);
+        };
+
+        let name = named_ty.name().to_owned();
+        let params: Result<_,_> = named_ty.param_defs().map(|param| {
+            // Params must be simple names and not array/tuples.
+            let TyNameDef::Named(name) = param else {
+                return Err(ParseError::ExpectingNamedParam)
+            };
+            // Param names must be capitalized because they represent generics.
+            if name.name().starts_with(|c: char| c.is_lowercase()) {
+                return Err(ParseError::ExpectingUppercaseParams)
+            }
+            Ok(name.name().to_owned())
+        }).collect();
+
+        Ok(Ty { name, params: params?, shape })
     }
 
     /// Break this into parts to be inserted.
@@ -30,6 +54,13 @@ impl Ty {
 /// An error creating some type [`Ty`].
 #[allow(missing_docs)]
 #[derive(Debug,derive_more::Display)]
-pub enum TyError {
-
+pub enum ParseError {
+    #[display(fmt = "Failed to parse the type name. Expected something like 'Foo' or 'Bar<A, B>'.")]
+    InvalidTyName,
+    #[display(fmt = "Expected something like 'Foo' or 'Bar<A, B>' but got an array or tuple type.")]
+    ExpectingNamedType,
+    #[display(fmt = "Expected the generic params to be names like 'A' or 'B', not arrays or tuples.")]
+    ExpectingNamedParam,
+    #[display(fmt = "Expected the generic params to be capitalized.")]
+    ExpectingUppercaseParams,
 }

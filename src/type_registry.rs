@@ -7,7 +7,7 @@ use smallvec::SmallVec;
 use crate::ty_desc::{ self, TyDesc, VariantDesc, Primitive };
 use crate::ty_name::{ TyName, TyNameDef };
 use crate::ty::Ty;
-use scale_type_resolver::{TypeResolver,ResolvedTypeVisitor,Field,Variant};
+use scale_type_resolver::{BitsOrderFormat, BitsStoreFormat, Field, ResolvedTypeVisitor, TypeResolver, Variant};
 
 /// An error resolving types.
 #[allow(missing_docs)]
@@ -20,7 +20,11 @@ pub enum TypeRegistryResolveError {
         type_name: String,
         expected_params: usize,
         provided_params: usize,
-    }
+    },
+    #[display(fmt = "Bitvecs must have an order type with the path bitvec::order::Msb0 or bitvec::order::Lsb0")]
+    UnexpectedBitOrderType,
+    #[display(fmt = "Bitvecs must have a store type which resolves to a primitive u8, u16, u32 or u64 type.")]
+    UnexpectedBitStoreType
 }
 
 /// The type info stored in the registry against a given named type.
@@ -102,10 +106,14 @@ impl TypeRegistry {
                 },
             ])),
             ("PhantomData", TyDesc::TupleOf(vec![])),
-            // TODOs:
-            // - How to resolve a BitVec? If one provides "BitVec<Lsb0,u8>" for instance. Maybe
-            //   need to have a special TyDesc::BitOrderFormat and then use Primitive::U8 etc to work out store format?
-            //   so then BitVec<S,O> => TyDesc::BitsequenceOf { store: TyName::parse("S"), order: TyName::parse("O") }.
+            // These exist just so that resolving bitvecs using these store types will work.
+            ("bitvec::order::Lsb0", TyDesc::StructOf(vec![])),
+            ("bitvec::order::Msb0", TyDesc::StructOf(vec![])),
+            // So long as the store type is a suitable primitive and the order type one of the above, this will work out.
+            ("bitvec::vec::BitVec<Store, Order>", TyDesc::BitSequence {
+                store: TyName::parse_unwrap("Store"),
+                order: TyName::parse_unwrap("Order"),
+            })
         ];
 
         for (name, desc) in basic_types {
@@ -172,22 +180,25 @@ impl <'a> TypeResolver for TypeRegistry {
                     .zip(ty.param_defs())
                     .collect();
 
-                // Visit the provided visitor with the relevant details.
+                // Depending on the type description, we we call the relevant visitor callback
+                // with the relevant details.
                 match &type_info.desc {
                     TyDesc::StructOf(fields) => {
+                        let path_iter = ty.name().split("::").map(|s| s.as_ref());
                         let fields_iter = fields
                             .iter()
                             .map(|field| Field {
                                 name: Some(&field.name),
                                 id: apply_param_mapping(field.value.clone(), &param_mapping),
                             });
-                        Ok(visitor.visit_composite(fields_iter))
+                        Ok(visitor.visit_composite(path_iter, fields_iter))
                     },
                     TyDesc::TupleOf(tys) => {
                         let type_ids = tys.iter().map(|ty| apply_param_mapping(ty.clone(), &param_mapping));
                         Ok(visitor.visit_tuple(type_ids))
                     },
                     TyDesc::EnumOf(variants) => {
+                        let path_iter = ty.name().split("::").map(|s| s.as_ref());
                         let variants_iter = variants
                             .iter()
                             .map(|var| Variant {
@@ -214,14 +225,48 @@ impl <'a> TypeResolver for TypeRegistry {
                                     }
                                 }
                             });
-                        Ok(visitor.visit_variant(variants_iter))
+                        Ok(visitor.visit_variant(path_iter, variants_iter))
                     },
-                    TyDesc::Sequenceof(ty) => {
-                        let type_id = apply_param_mapping(ty.clone(), &param_mapping);
-                        Ok(visitor.visit_sequence(type_id))
+                    TyDesc::Sequenceof(seq) => {
+                        let path_iter = ty.name().split("::").map(|s| s.as_ref());
+                        let type_id = apply_param_mapping(seq.clone(), &param_mapping);
+                        Ok(visitor.visit_sequence(path_iter, type_id))
                     },
-                    TyDesc::BitSequence(order, store) => {
-                        Ok(visitor.visit_bit_sequence(*store, *order))
+                    TyDesc::BitSequence { order, store } => {
+                        let order_visitor = scale_type_resolver::visitor::new((), |_, _| None)
+                            .visit_composite(|_, path, _| {
+                                // use the path to determine whether this is the Lsb0 or Msb0
+                                // ordering type we're looking for, returning None if not.
+                                if path.next()? != "bitvec" { return None }
+                                if path.next()? != "order" { return None }
+
+                                let ident = path.next()?;
+                                if ident == "Lsb0" {
+                                    Some(BitsOrderFormat::Lsb0)
+                                } else if ident == "Msb0" {
+                                    Some(BitsOrderFormat::Msb0)
+                                } else {
+                                    None
+                                }
+                            });
+                        let store_visitor = scale_type_resolver::visitor::new((), |_, _| None)
+                            .visit_primitive(|_, p| {
+                                // use the primitive type to pick the correct bit store format.
+                                match p {
+                                    Primitive::U8 => Some(BitsStoreFormat::U8),
+                                    Primitive::U16 => Some(BitsStoreFormat::U16),
+                                    Primitive::U32 => Some(BitsStoreFormat::U32),
+                                    Primitive::U64 => Some(BitsStoreFormat::U64),
+                                    _ => None
+                                }
+                            });
+
+                        let order = self.resolve(order.clone(), order_visitor)?
+                            .ok_or(TypeRegistryResolveError::UnexpectedBitOrderType)?;
+                        let store = self.resolve(store.clone(), store_visitor)?
+                            .ok_or(TypeRegistryResolveError::UnexpectedBitStoreType)?;
+
+                        Ok(visitor.visit_bit_sequence(store, order))
                     },
                     TyDesc::Compact(ty) => {
                         let type_id = apply_param_mapping(ty.clone(), &param_mapping);

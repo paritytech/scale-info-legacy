@@ -17,7 +17,13 @@ pub enum TyDesc {
     /// A sequence of some type.
     Sequenceof(TyName),
     /// A bit sequence.
-    BitSequence(BitsOrderFormat,BitsStoreFormat),
+    BitSequence {
+        /// The order type is expected to resolve to a type with the path
+        /// `bitvec::order::Lsb0` or `bitvec::order::Msb0`.
+        order: TyName,
+        /// The store type is expected to resolve to a primitive U8/U16/U32/U64.
+        store: TyName
+    },
     /// A compact encoded type.
     Compact(TyName),
     /// A primitive type.
