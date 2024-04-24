@@ -1,5 +1,8 @@
-//! This crate provides a type registry that is capable of storing and providing back information about
+//! This crate provides a [`TypeRegistry`] that is capable of storing and providing back information about
 //! historic Substrate based types (ie those that are handed back in pre-V14 metadata).
+//!
+//! See [`TypeRegistry::insert()`] to learn how to add types to the registry, and [`TypeRegistry::resolve_type()`]
+//! to learn how to then resolve type information using the registry.
 
 #![no_std]
 #![deny(missing_docs)]

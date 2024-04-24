@@ -11,20 +11,19 @@ use smallvec::SmallVec;
 /// which takes a type name (including any generics) like `"Vec<T>"` or `"Foo"` along with a
 /// [`TypeShape`] which defines how this type should be SCALE encoded/decoded.
 ///
+/// See [`crate::TypeRegistry::insert()`] for a full example.
+///
 /// # Example
 ///
 /// ```rust
-/// use scale_info_legacy::{ TypeRegistry, TypeDescription, TypeShape, TypeName };
+/// use scale_info_legacy::{ TypeDescription, TypeShape, TypeName };
 ///
-/// // Describe a type:
-/// let desc = TypeDescription::new(
+/// // Describe a type (this is how a Vec is described). Note that you should
+/// // use the generic parameters where necessary in the description.
+/// let vec_description = TypeDescription::new(
 ///     "Vec<T>",
 ///     TypeShape::SequenceOf(TypeName::parse_unwrap("T"))
 /// ).unwrap();
-///
-/// // Add the description to our registry:
-/// let mut registry = TypeRegistry::empty();
-/// registry.insert(desc);
 /// ```
 pub struct TypeDescription {
     /// The name of the type.

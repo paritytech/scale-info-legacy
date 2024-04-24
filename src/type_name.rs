@@ -12,26 +12,16 @@ pub use parser::{ParseError, ParseErrorKind};
 /// [`TypeName::parse()`] to parse a string into a [`TypeName`], which can then be used
 /// to look up the associated details in the registry.
 ///
+/// See [`crate::TypeRegistry::resolve_type()`] for a full example.
+///
 /// # Example
 ///
 /// ```rust
-/// use scale_info_legacy::{ TypeRegistry, TypeDescription, TypeShape, TypeName };
-/// use scale_type_resolver::visitor;
+/// use scale_info_legacy::{ TypeName };
 ///
-/// // Name a type you want to know how to encode/decode:
-/// let name = TypeName::parse("Vec<(bool, u32)>").unwrap();
-///
-/// // Provide a dumb visitor (ie set of callbacks) to tell us about the type that
-/// // we query. Here, all we do is return true if the type is a sequence and
-/// // false otherwise.
-/// let my_visitor = visitor::new((), |_, _| false)
-///     .visit_sequence(|_, _, _| true);
-///
-/// // Query this name in our registry, passing our visitor:
-/// let mut registry = TypeRegistry::basic();
-/// let is_sequence = registry.resolve_type(name, my_visitor).unwrap();
-///
-/// assert!(is_sequence);
+/// let sequence = TypeName::parse("Vec<(bool, u32)>").unwrap();
+/// let array = TypeName::parse("[u8; 32]").unwrap();
+/// let tuple = TypeName::parse("(bool, u32, Vec<String>)").unwrap();
 /// ```
 #[derive(Debug, Clone)]
 pub struct TypeName {

@@ -148,7 +148,7 @@ impl TypeRegistry {
         registry
     }
 
-    /// Insert a new named type into the registry.
+    /// Insert a new type into the registry.
     ///
     /// # Example
     ///
@@ -173,6 +173,28 @@ impl TypeRegistry {
     /// Resolve some type information by providing a [`TypeName`], which is the
     /// concrete name of a type we want to know how to decode values for, and a
     /// `visitor` which will be called in order to describe how to decode it.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use scale_info_legacy::{ TypeRegistry, TypeDescription, TypeShape, TypeName };
+    /// use scale_type_resolver::visitor;
+    ///
+    /// // Name a type that you want to know how to encode/decode:
+    /// let name = TypeName::parse("Vec<(bool, u32)>").unwrap();
+    ///
+    /// // Provide a dumb visitor (ie set of callbacks) to tell us about the type that
+    /// // we query. Here, all we do is return true if the type is a sequence and
+    /// // false otherwise.
+    /// let my_visitor = visitor::new((), |_, _| false)
+    ///     .visit_sequence(|_, _, _| true);
+    ///
+    /// // Query this name in our registry, passing our visitor:
+    /// let mut registry = TypeRegistry::basic();
+    /// let is_sequence = registry.resolve_type(name, my_visitor).unwrap();
+    ///
+    /// assert!(is_sequence);
+    /// ```
     pub fn resolve_type<'this, V: ResolvedTypeVisitor<'this, TypeId = TypeName>>(
         &'this self,
         type_id: TypeName,
@@ -296,7 +318,28 @@ impl TypeRegistry {
 
     /// Resolve some type information by providing the string name of the type,
     /// and a `visitor` which will be called in order to describe how to decode it.
-    pub fn resolve_str<'this, V: ResolvedTypeVisitor<'this, TypeId = TypeName>>(
+    /// This just creates a [`TypeName`] under the hood and uses that to resolve the
+    /// type.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use scale_info_legacy::{ TypeRegistry, TypeDescription, TypeShape };
+    /// use scale_type_resolver::visitor;
+    ///
+    /// // Provide a dumb visitor (ie set of callbacks) to tell us about the type that
+    /// // we query. Here, all we do is return true if the type is a sequence and
+    /// // false otherwise.
+    /// let my_visitor = visitor::new((), |_, _| false)
+    ///     .visit_sequence(|_, _, _| true);
+    ///
+    /// // Query the string name in our registry, passing our visitor:
+    /// let mut registry = TypeRegistry::basic();
+    /// let is_sequence = registry.resolve_type_str("Vec<(bool, u32)>", my_visitor).unwrap();
+    ///
+    /// assert!(is_sequence);
+    /// ```
+    pub fn resolve_type_str<'this, V: ResolvedTypeVisitor<'this, TypeId = TypeName>>(
         &'this self,
         type_name_str: &str,
         visitor: V,
