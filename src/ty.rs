@@ -1,8 +1,8 @@
 //! This module provides a struct, [`Ty`], to describe the name, generic params and shape of some type that you'd like to insert into the [`crate::type_registry::TypeRegistry`].
 
 use smallvec::SmallVec;
-use crate::ty_desc::TyDesc;
-use crate::ty_name::{TyName, TyNameDef};
+use crate::ty_desc::Shape;
+use crate::ty_name::{Name, NameDef};
 
 /// A type to insert into the registry.
 pub struct Ty {
@@ -11,27 +11,27 @@ pub struct Ty {
     // The generic param names that may be used in the type description below.
     params: SmallVec<[String; 4]>,
     /// A description of the shape of the type.
-    shape: TyDesc,
+    shape: Shape,
 }
 
 impl Ty {
     /// Create a [`Ty`] by providing a name like "Bar" or "Foo<A, B>" and a description of
     /// the shape of the type with this name.
-    pub fn new(name_with_params: impl AsRef<str>, shape: TyDesc) -> Result<Self, ParseError> {
+    pub fn new(name_with_params: impl AsRef<str>, shape: Shape) -> Result<Self, ParseError> {
         // The name we are looking for is just a restricted form of a ty_name, so we
         // will just borrow that parsing logic and then check that we get the expected shape back:
-        let ty_name = TyName::parse(name_with_params.as_ref())
+        let ty_name = Name::parse(name_with_params.as_ref())
             .map_err(|_| ParseError::InvalidTyName)?;
 
         // We only accept named types like Foo<A, B> or path::to::Bar.
-        let TyNameDef::Named(named_ty) = ty_name.def() else {
+        let NameDef::Named(named_ty) = ty_name.def() else {
             return Err(ParseError::ExpectingNamedType);
         };
 
         let name = named_ty.name().to_owned();
         let params: Result<_,_> = named_ty.param_defs().map(|param| {
             // Params must be simple names and not array/tuples.
-            let TyNameDef::Named(name) = param else {
+            let NameDef::Named(name) = param else {
                 return Err(ParseError::ExpectingNamedParam)
             };
             // Param names must be capitalized because they represent generics.
@@ -45,7 +45,7 @@ impl Ty {
     }
 
     /// Break this into parts to be inserted.
-    pub(crate) fn into_parts(self) -> (String, SmallVec<[String; 4]>, TyDesc) {
+    pub(crate) fn into_parts(self) -> (String, SmallVec<[String; 4]>, Shape) {
         let Ty { name, params, shape } = self;
         (name, params, shape)
     }
