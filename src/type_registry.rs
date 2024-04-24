@@ -1,12 +1,15 @@
 //! This module provides a [`TypeRegistry`], which can be used to store and resolve
 //! type information for types based on their names.
 
-use std::collections::HashMap;
-use std::iter::ExactSizeIterator;
+use alloc::string::String;
+use alloc::vec;
+use alloc::borrow::ToOwned;
+use hashbrown::HashMap;
+use core::iter::ExactSizeIterator;
 use smallvec::SmallVec;
-use crate::ty_desc::{ self, Shape, VariantDesc, Primitive };
-use crate::ty_name::{ self, Name, NameDef };
-use crate::ty::Ty;
+use crate::type_shape::{ self, TypeShape, VariantDesc, Primitive };
+use crate::type_name::{ self, TypeName, TypeNameDef };
+use crate::type_description::TypeDescription;
 use scale_type_resolver::{BitsOrderFormat, BitsStoreFormat, Field, ResolvedTypeVisitor, TypeResolver, Variant};
 
 /// An error resolving types.
@@ -14,7 +17,7 @@ use scale_type_resolver::{BitsOrderFormat, BitsStoreFormat, Field, ResolvedTypeV
 #[derive(Debug,Clone,PartialEq,Eq,derive_more::Display)]
 pub enum TypeRegistryResolveError {
     #[display(fmt = "'{_0}' is not a valid type name: {_1}")]
-    TypeNameInvalid(String, ty_name::ParseError),
+    TypeNameInvalid(String, type_name::ParseError),
     #[display(fmt = "Type '{_0}' not found")]
     TypeNotFound(String),
     #[display(fmt = "Wrong number of params provided for {type_name}: expected {expected_params} but got {provided_params}")]
@@ -34,10 +37,17 @@ struct TypeInfo {
     // The generic param names that may be used in the type description below.
     params: SmallVec<[String; 4]>,
     // A description of the shape of the type.
-    desc: Shape
+    desc: TypeShape
 }
 
-/// A type registry.
+/// A type registry that stores a mapping from type names to a description of how to SCALE
+/// encode/decode that type.
+///
+/// To insert a new type description, use [`TypeRegistry::insert()`]. To look up the shape
+/// of a type, use [`TypeRegistry::resolve_type()`]. [`TypeRegistry`] implements
+/// [`scale_type_resolver::TypeResolver`], which means that it can be used in conjunction with
+/// the `scale-encode` crate to SCALE encode types, or the `scale-decode` crate to SCALE decode
+/// bytes into some type.
 pub struct TypeRegistry {
     // A hash from the name of a type (like `Vec` or `usize`) to a description
     // of the shape of the type (which may involve generic params or just be
@@ -58,75 +68,91 @@ impl TypeRegistry {
         let mut registry = TypeRegistry::empty();
 
         let basic_types = [
-            ("bool", Shape::Primitive(Primitive::Bool)),
-            ("char", Shape::Primitive(Primitive::Char)),
-            ("u8", Shape::Primitive(Primitive::U8)),
-            ("u16", Shape::Primitive(Primitive::U16)),
-            ("u32", Shape::Primitive(Primitive::U32)),
-            ("u64", Shape::Primitive(Primitive::U64)),
-            ("u128", Shape::Primitive(Primitive::U128)),
-            ("u256", Shape::Primitive(Primitive::U256)),
-            ("i8", Shape::Primitive(Primitive::I8)),
-            ("i16", Shape::Primitive(Primitive::I16)),
-            ("i32", Shape::Primitive(Primitive::I32)),
-            ("i64", Shape::Primitive(Primitive::I64)),
-            ("i128", Shape::Primitive(Primitive::I128)),
-            ("i256", Shape::Primitive(Primitive::I256)),
-            ("str", Shape::Primitive(Primitive::Str)),
-            ("String", Shape::Primitive(Primitive::Str)),
-            ("Box<T>", Shape::AliasOf(Name::parse_unwrap("T"))),
-            ("Arc<T>", Shape::AliasOf(Name::parse_unwrap("T"))),
-            ("Rc<T>", Shape::AliasOf(Name::parse_unwrap("T"))),
-            ("Vec<T>", Shape::Sequenceof(Name::parse_unwrap("T"))),
-            ("VecDeque<T>", Shape::Sequenceof(Name::parse_unwrap("T"))),
-            ("BTreeMap<K,V>", Shape::Sequenceof(Name::parse_unwrap("(K, V)"))),
-            ("BTreeSet<V>", Shape::Sequenceof(Name::parse_unwrap("V"))),
-            ("BinaryHeap<V>", Shape::Sequenceof(Name::parse_unwrap("V"))),
-            ("Cow<T>", Shape::TupleOf(vec![Name::parse_unwrap("T")])),
-            ("Option<T>", Shape::EnumOf(vec![
-                ty_desc::Variant {
+            ("bool", TypeShape::Primitive(Primitive::Bool)),
+            ("char", TypeShape::Primitive(Primitive::Char)),
+            ("u8", TypeShape::Primitive(Primitive::U8)),
+            ("u16", TypeShape::Primitive(Primitive::U16)),
+            ("u32", TypeShape::Primitive(Primitive::U32)),
+            ("u64", TypeShape::Primitive(Primitive::U64)),
+            ("u128", TypeShape::Primitive(Primitive::U128)),
+            ("u256", TypeShape::Primitive(Primitive::U256)),
+            ("i8", TypeShape::Primitive(Primitive::I8)),
+            ("i16", TypeShape::Primitive(Primitive::I16)),
+            ("i32", TypeShape::Primitive(Primitive::I32)),
+            ("i64", TypeShape::Primitive(Primitive::I64)),
+            ("i128", TypeShape::Primitive(Primitive::I128)),
+            ("i256", TypeShape::Primitive(Primitive::I256)),
+            ("str", TypeShape::Primitive(Primitive::Str)),
+            ("String", TypeShape::Primitive(Primitive::Str)),
+            ("Box<T>", TypeShape::AliasOf(TypeName::parse_unwrap("T"))),
+            ("Arc<T>", TypeShape::AliasOf(TypeName::parse_unwrap("T"))),
+            ("Rc<T>", TypeShape::AliasOf(TypeName::parse_unwrap("T"))),
+            ("Vec<T>", TypeShape::SequenceOf(TypeName::parse_unwrap("T"))),
+            ("VecDeque<T>", TypeShape::SequenceOf(TypeName::parse_unwrap("T"))),
+            ("BTreeMap<K,V>", TypeShape::SequenceOf(TypeName::parse_unwrap("(K, V)"))),
+            ("BTreeSet<V>", TypeShape::SequenceOf(TypeName::parse_unwrap("V"))),
+            ("BinaryHeap<V>", TypeShape::SequenceOf(TypeName::parse_unwrap("V"))),
+            ("Cow<T>", TypeShape::TupleOf(vec![TypeName::parse_unwrap("T")])),
+            ("Option<T>", TypeShape::EnumOf(vec![
+                type_shape::Variant {
                     index: 0,
                     name: "None".to_owned(),
-                    value: ty_desc::VariantDesc::TupleOf(vec![])
+                    value: type_shape::VariantDesc::TupleOf(vec![])
                 },
-                ty_desc::Variant {
+                type_shape::Variant {
                     index: 1,
                     name: "Some".to_owned(),
-                    value: ty_desc::VariantDesc::TupleOf(vec![Name::parse_unwrap("T")])
+                    value: type_shape::VariantDesc::TupleOf(vec![TypeName::parse_unwrap("T")])
                 },
             ])),
-            ("Result<T,E>", Shape::EnumOf(vec![
-                ty_desc::Variant {
+            ("Result<T,E>", TypeShape::EnumOf(vec![
+                type_shape::Variant {
                     index: 0,
                     name: "Ok".to_owned(),
-                    value: ty_desc::VariantDesc::TupleOf(vec![Name::parse_unwrap("T")])
+                    value: type_shape::VariantDesc::TupleOf(vec![TypeName::parse_unwrap("T")])
                 },
-                ty_desc::Variant {
+                type_shape::Variant {
                     index: 1,
                     name: "Err".to_owned(),
-                    value: ty_desc::VariantDesc::TupleOf(vec![Name::parse_unwrap("E")])
+                    value: type_shape::VariantDesc::TupleOf(vec![TypeName::parse_unwrap("E")])
                 },
             ])),
-            ("PhantomData", Shape::TupleOf(vec![])),
+            ("PhantomData", TypeShape::TupleOf(vec![])),
             // These exist just so that resolving bitvecs using these store types will work.
-            ("bitvec::order::Lsb0", Shape::StructOf(vec![])),
-            ("bitvec::order::Msb0", Shape::StructOf(vec![])),
+            ("bitvec::order::Lsb0", TypeShape::StructOf(vec![])),
+            ("bitvec::order::Msb0", TypeShape::StructOf(vec![])),
             // So long as the store type is a suitable primitive and the order type one of the above, this will work out.
-            ("bitvec::vec::BitVec<Store, Order>", Shape::BitSequence {
-                store: Name::parse_unwrap("Store"),
-                order: Name::parse_unwrap("Order"),
+            ("bitvec::vec::BitVec<Store, Order>", TypeShape::BitSequence {
+                store: TypeName::parse_unwrap("Store"),
+                order: TypeName::parse_unwrap("Order"),
             })
         ];
 
         for (name, desc) in basic_types {
-            registry.insert(Ty::new(name, desc).expect("basic type should be valid"));
+            registry.insert(TypeDescription::new(name, desc).expect("basic type should be valid"));
         }
 
         registry
     }
 
     /// Insert a new named type into the registry.
-    pub fn insert(&mut self, ty: Ty) {
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use scale_info_legacy::{ TypeRegistry, TypeDescription, TypeShape, TypeName };
+    ///
+    /// // Describe a type:
+    /// let desc = TypeDescription::new(
+    ///     "Foo<T>",
+    ///     TypeShape::SequenceOf(TypeName::parse_unwrap("T"))
+    /// ).unwrap();
+    ///
+    /// // Add a type description to our registry:
+    /// let mut registry = TypeRegistry::empty();
+    /// registry.insert(desc);
+    /// ```
+    pub fn insert(&mut self, ty: TypeDescription) {
         let (name, params, desc) = ty.into_parts();
         self.types.insert(name, TypeInfo { desc, params });
     }
@@ -134,41 +160,13 @@ impl TypeRegistry {
     /// Resolve some type information by providing a [`TypeName`], which is the
     /// concrete name of a type we want to know how to decode values for, and a
     /// `visitor` which will be called in order to describe how to decode it.
-    ///
-    /// This is an alias for [`<TypeRegistry as TypeResolver>::resolve_type()`].
-    pub fn resolve<'this, V: ResolvedTypeVisitor<'this, TypeId = Name>>(
+    pub fn resolve_type<'this, V: ResolvedTypeVisitor<'this, TypeId = TypeName>>(
         &'this self,
-        type_id: Name,
+        type_id: TypeName,
         visitor: V,
     ) -> Result<V::Value, TypeRegistryResolveError> {
-        self.resolve_type(type_id, visitor)
-    }
-
-    /// Resolve some type information by providing the string name of the type,
-    /// and a `visitor` which will be called in order to describe how to decode it.
-    pub fn resolve_str<'this, V: ResolvedTypeVisitor<'this, TypeId = Name>>(
-        &'this self,
-        type_name_str: &str,
-        visitor: V,
-    ) -> Result<V::Value, TypeRegistryResolveError> {
-        let type_id = Name::parse(type_name_str).map_err(|e| {
-            TypeRegistryResolveError::TypeNameInvalid(type_name_str.to_owned(), e)
-        })?;
-        self.resolve_type(type_id, visitor)
-    }
-}
-
-impl <'a> TypeResolver for TypeRegistry {
-    type TypeId = Name;
-    type Error = TypeRegistryResolveError;
-
-    fn resolve_type<'this, V: ResolvedTypeVisitor<'this, TypeId = Self::TypeId>>(
-        &'this self,
-        type_id: Self::TypeId,
-        visitor: V,
-    ) -> Result<V::Value, Self::Error> {
         match type_id.def() {
-            NameDef::Named(ty) => {
+            TypeNameDef::Named(ty) => {
                 let Some(type_info) = self.types.get(ty.name()) else {
                     return Err(TypeRegistryResolveError::TypeNotFound(ty.name().to_owned()))
                 };
@@ -189,7 +187,7 @@ impl <'a> TypeResolver for TypeRegistry {
                 // Build a mapping from generic ident to the concrete type def we've been given.
                 // We use this to update generic type names like Vec<T> into concrete ones that the
                 // user can access in the registry, like Vec<u32>,
-                let param_mapping: SmallVec<[(&str, NameDef<'_>); 4]> = type_info.params
+                let param_mapping: SmallVec<[(&str, TypeNameDef<'_>); 4]> = type_info.params
                     .iter()
                     .map(|ident| ident.as_str())
                     .zip(ty.param_defs())
@@ -198,7 +196,7 @@ impl <'a> TypeResolver for TypeRegistry {
                 // Depending on the type description, we we call the relevant visitor callback
                 // with the relevant details.
                 match &type_info.desc {
-                    Shape::StructOf(fields) => {
+                    TypeShape::StructOf(fields) => {
                         let path_iter = ty.name().split("::").map(|s| s.as_ref());
                         let fields_iter = fields
                             .iter()
@@ -208,11 +206,11 @@ impl <'a> TypeResolver for TypeRegistry {
                             });
                         Ok(visitor.visit_composite(path_iter, fields_iter))
                     },
-                    Shape::TupleOf(tys) => {
+                    TypeShape::TupleOf(tys) => {
                         let type_ids = tys.iter().map(|ty| apply_param_mapping(ty.clone(), &param_mapping));
                         Ok(visitor.visit_tuple(type_ids))
                     },
-                    Shape::EnumOf(variants) => {
+                    TypeShape::EnumOf(variants) => {
                         let path_iter = ty.name().split("::").map(|s| s.as_ref());
                         let variants_iter = variants
                             .iter()
@@ -242,48 +240,74 @@ impl <'a> TypeResolver for TypeRegistry {
                             });
                         Ok(visitor.visit_variant(path_iter, variants_iter))
                     },
-                    Shape::Sequenceof(seq) => {
+                    TypeShape::SequenceOf(seq) => {
                         let path_iter = ty.name().split("::").map(|s| s.as_ref());
                         let type_id = apply_param_mapping(seq.clone(), &param_mapping);
                         Ok(visitor.visit_sequence(path_iter, type_id))
                     },
-                    Shape::BitSequence { order, store } => {
+                    TypeShape::BitSequence { order, store } => {
                         let order = apply_param_mapping(order.clone(), &param_mapping);
                         let store = apply_param_mapping(store.clone(), &param_mapping);
 
                         let order_visitor = order_visitor();
                         let store_visitor = store_visitor();
 
-                        let order_format = self.resolve(order, order_visitor)?
+                        let order_format = self.resolve_type(order, order_visitor)?
                             .ok_or(TypeRegistryResolveError::UnexpectedBitOrderType)?;
-                        let store_format = self.resolve(store, store_visitor)?
+                        let store_format = self.resolve_type(store, store_visitor)?
                             .ok_or(TypeRegistryResolveError::UnexpectedBitStoreType)?;
 
                         Ok(visitor.visit_bit_sequence(store_format, order_format))
                     },
-                    Shape::Compact(ty) => {
+                    TypeShape::Compact(ty) => {
                         let type_id = apply_param_mapping(ty.clone(), &param_mapping);
                         Ok(visitor.visit_compact(type_id))
                     },
-                    Shape::Primitive(p) => {
+                    TypeShape::Primitive(p) => {
                         Ok(visitor.visit_primitive(*p))
                     },
-                    Shape::AliasOf(ty) => {
+                    TypeShape::AliasOf(ty) => {
                         let type_id = apply_param_mapping(ty.clone(), &param_mapping);
                         self.resolve_type(type_id, visitor)
                     },
                 }
             },
-            NameDef::Unnamed(ty) => {
+            TypeNameDef::Unnamed(ty) => {
                 let type_ids = ty.param_defs().map(|def| def.into_type_name());
                 Ok(visitor.visit_tuple(type_ids))
             },
-            NameDef::Array(ty) => {
+            TypeNameDef::Array(ty) => {
                 let len = ty.length();
                 let type_id = ty.param_def().into_type_name();
                 Ok(visitor.visit_array(type_id, len))
             },
         }
+    }
+
+    /// Resolve some type information by providing the string name of the type,
+    /// and a `visitor` which will be called in order to describe how to decode it.
+    pub fn resolve_str<'this, V: ResolvedTypeVisitor<'this, TypeId = TypeName>>(
+        &'this self,
+        type_name_str: &str,
+        visitor: V,
+    ) -> Result<V::Value, TypeRegistryResolveError> {
+        let type_id = TypeName::parse(type_name_str).map_err(|e| {
+            TypeRegistryResolveError::TypeNameInvalid(type_name_str.to_owned(), e)
+        })?;
+        self.resolve_type(type_id, visitor)
+    }
+}
+
+impl <'a> TypeResolver for TypeRegistry {
+    type TypeId = TypeName;
+    type Error = TypeRegistryResolveError;
+
+    fn resolve_type<'this, V: ResolvedTypeVisitor<'this, TypeId = Self::TypeId>>(
+        &'this self,
+        type_id: Self::TypeId,
+        visitor: V,
+    ) -> Result<V::Value, Self::Error> {
+        self.resolve_type(type_id, visitor)
     }
 }
 
@@ -291,7 +315,7 @@ impl <'a> TypeResolver for TypeRegistry {
 // that the compiler can generate one exact type for the visitor. If it was written in line,
 // you'd hit a recursion limit because each creation of the visitor would have a unique type,
 // which is then passed into `.resolve()` requiring unique codegen, recursively.
-fn order_visitor<'resolver>() -> impl scale_type_resolver::ResolvedTypeVisitor<'resolver, TypeId = Name, Value = Option<BitsOrderFormat>> {
+fn order_visitor<'resolver>() -> impl scale_type_resolver::ResolvedTypeVisitor<'resolver, TypeId = TypeName, Value = Option<BitsOrderFormat>> {
     scale_type_resolver::visitor::new((), |_, _| None)
         .visit_composite(|_, path, _| {
             // use the path to determine whether this is the Lsb0 or Msb0
@@ -310,7 +334,7 @@ fn order_visitor<'resolver>() -> impl scale_type_resolver::ResolvedTypeVisitor<'
         })
 }
 
-fn store_visitor<'resolver>() -> impl scale_type_resolver::ResolvedTypeVisitor<'resolver, TypeId = Name, Value = Option<BitsStoreFormat>> {
+fn store_visitor<'resolver>() -> impl scale_type_resolver::ResolvedTypeVisitor<'resolver, TypeId = TypeName, Value = Option<BitsStoreFormat>> {
     scale_type_resolver::visitor::new((), |_, _| None)
         .visit_primitive(|_, p| {
             // use the primitive type to pick the correct bit store format.
@@ -326,7 +350,7 @@ fn store_visitor<'resolver>() -> impl scale_type_resolver::ResolvedTypeVisitor<'
 
 /// Takes a TypeName and a mapping from generic ident to new defs, and returns a new TypeName where
 /// said generic params are replaced with concrete types.
-fn apply_param_mapping(ty: Name, param_mapping: &SmallVec<[(&str, NameDef<'_>); 4]>) -> Name {
+fn apply_param_mapping(ty: TypeName, param_mapping: &SmallVec<[(&str, TypeNameDef<'_>); 4]>) -> TypeName {
     param_mapping.iter().fold(ty, |ty, (ident, def)| ty.with_substitution(ident, *def))
 }
 
@@ -357,8 +381,10 @@ impl <Item, A: ExactSizeIterator<Item=Item>, B: ExactSizeIterator<Item=Item>> Ex
 #[cfg(test)]
 mod test {
     use super::*;
+    use alloc::boxed::Box;
+    use alloc::vec::Vec;
 
-    fn to_resolved_info(type_id: Name, types: &TypeRegistry) -> ResolvedTypeInfo {
+    fn to_resolved_info(type_id: TypeName, types: &TypeRegistry) -> ResolvedTypeInfo {
         use scale_type_resolver::visitor;
 
         // Build a quick visitor which turns resolved type info
@@ -407,14 +433,14 @@ mod test {
                 ResolvedTypeInfo::BitSequence(store_format, order_format)
             });
 
-        match types.resolve(type_id, visitor) {
+        match types.resolve_type(type_id, visitor) {
             Err(e) => ResolvedTypeInfo::Err(e),
             Ok(info) => info,
         }
     }
 
     fn to_resolved_info_str(type_id_str: &str, types: &TypeRegistry) -> ResolvedTypeInfo {
-        let type_id = match Name::parse(type_id_str) {
+        let type_id = match TypeName::parse(type_id_str) {
             Ok(id) => id,
             Err(e) => {
                 return ResolvedTypeInfo::Err(TypeRegistryResolveError::TypeNameInvalid(type_id_str.to_owned(), e));
