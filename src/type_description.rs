@@ -1,11 +1,11 @@
 //! This module provides a struct, [`TypeDescription`]. This struct defines a single type that can
 //! be inserted into the [`crate::type_registry::TypeRegistry`].
 
+use crate::type_name::{TypeName, TypeNameDef};
+use crate::type_shape::TypeShape;
+use alloc::borrow::ToOwned;
 use alloc::string::String;
 use smallvec::SmallVec;
-use alloc::borrow::ToOwned;
-use crate::type_shape::TypeShape;
-use crate::type_name::{TypeName, TypeNameDef};
 
 /// A type to insert into the registry. A single method is exposed, [`TypeDescription::new`],
 /// which takes a type name (including any generics) like `"Vec<T>"` or `"Foo"` along with a
@@ -41,8 +41,8 @@ impl TypeDescription {
     pub fn new(name_with_params: impl AsRef<str>, shape: TypeShape) -> Result<Self, ParseError> {
         // The name we are looking for is just a restricted form of a ty_name, so we
         // will just borrow that parsing logic and then check that we get the expected shape back:
-        let ty_name = TypeName::parse(name_with_params.as_ref())
-            .map_err(|_| ParseError::InvalidTyName)?;
+        let ty_name =
+            TypeName::parse(name_with_params.as_ref()).map_err(|_| ParseError::InvalidTyName)?;
 
         // We only accept named types like Foo<A, B> or path::to::Bar.
         let TypeNameDef::Named(named_ty) = ty_name.def() else {
@@ -50,17 +50,20 @@ impl TypeDescription {
         };
 
         let name = named_ty.name().to_owned();
-        let params: Result<_,_> = named_ty.param_defs().map(|param| {
-            // Params must be simple names and not array/tuples.
-            let TypeNameDef::Named(name) = param else {
-                return Err(ParseError::ExpectingNamedParam)
-            };
-            // Param names must be capitalized because they represent generics.
-            if name.name().starts_with(|c: char| c.is_lowercase()) {
-                return Err(ParseError::ExpectingUppercaseParams)
-            }
-            Ok(name.name().to_owned())
-        }).collect();
+        let params: Result<_, _> = named_ty
+            .param_defs()
+            .map(|param| {
+                // Params must be simple names and not array/tuples.
+                let TypeNameDef::Named(name) = param else {
+                    return Err(ParseError::ExpectingNamedParam);
+                };
+                // Param names must be capitalized because they represent generics.
+                if name.name().starts_with(|c: char| c.is_lowercase()) {
+                    return Err(ParseError::ExpectingUppercaseParams);
+                }
+                Ok(name.name().to_owned())
+            })
+            .collect();
 
         Ok(TypeDescription { name, params: params?, shape })
     }
@@ -74,13 +77,19 @@ impl TypeDescription {
 
 /// An error creating some type [`Ty`].
 #[allow(missing_docs)]
-#[derive(Debug,derive_more::Display)]
+#[derive(Debug, derive_more::Display)]
 pub enum ParseError {
-    #[display(fmt = "Failed to parse the type name. Expected something like 'Foo' or 'Bar<A, B>'.")]
+    #[display(
+        fmt = "Failed to parse the type name. Expected something like 'Foo' or 'Bar<A, B>'."
+    )]
     InvalidTyName,
-    #[display(fmt = "Expected something like 'Foo' or 'Bar<A, B>' but got an array or tuple type.")]
+    #[display(
+        fmt = "Expected something like 'Foo' or 'Bar<A, B>' but got an array or tuple type."
+    )]
     ExpectingNamedType,
-    #[display(fmt = "Expected the generic params to be names like 'A' or 'B', not arrays or tuples.")]
+    #[display(
+        fmt = "Expected the generic params to be names like 'A' or 'B', not arrays or tuples."
+    )]
     ExpectingNamedParam,
     #[display(fmt = "Expected the generic params to be capitalized.")]
     ExpectingUppercaseParams,

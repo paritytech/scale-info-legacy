@@ -2,11 +2,11 @@
 //! that can be looked up in the [`crate::TypeRegistry`].
 
 use alloc::string::String;
-use smallvec::SmallVec;
 use smallstr::SmallString;
+use smallvec::SmallVec;
 
 // Re-export errors in our public interface:
-pub use parser::{ ParseError, ParseErrorKind };
+pub use parser::{ParseError, ParseErrorKind};
 
 /// The name of a type that you'd like to query in the [`crate::TypeRegistry`]. Use
 /// [`TypeName::parse()`] to parse a string into a [`TypeName`], which can then be used
@@ -33,7 +33,7 @@ pub use parser::{ ParseError, ParseErrorKind };
 ///
 /// assert!(is_sequence);
 /// ```
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct TypeName {
     registry: Registry,
     idx: usize,
@@ -46,10 +46,7 @@ impl Default for TypeName {
         // Various methods expect the registry to have at least one type in it,
         // so we set the type to be the empty unit type.
         let unit_type = TypeNameInner::Unnamed { params: Params::new() };
-        Self {
-            registry: Registry::from_iter([unit_type]),
-            idx: 0,
-        }
+        Self { registry: Registry::from_iter([unit_type]), idx: 0 }
     }
 }
 
@@ -85,13 +82,17 @@ impl TypeName {
             // Registry must have at least 1 item in, and the last item
             // we added is always the outermost one we want to point to.
             idx: registry.len() - 1,
-            registry
+            registry,
         })
     }
 
     /// Substitute a named type with another. This is useful if we have a type name
     /// like `Vec<T>` and want to turn it into a concrete type like `Vec<u32>`.
-    pub(crate) fn with_substitution<'other>(mut self, ident: &str, replacement: TypeNameDef<'other>) -> TypeName {
+    pub(crate) fn with_substitution(
+        mut self,
+        ident: &str,
+        replacement: TypeNameDef<'_>,
+    ) -> TypeName {
         let original_len = self.registry.len();
 
         // These are all of the indexes we'll want to swap for something else:
@@ -104,7 +105,7 @@ impl TypeName {
 
         // Nothing to do; return unchanged:
         if indexes_to_replace.is_empty() {
-            return self
+            return self;
         }
 
         // Insert the replacement type, returning the index to it:
@@ -130,7 +131,7 @@ impl TypeName {
             }
             if indexes_to_replace.contains(&idx) {
                 // Ignore any types we may have updated (because we may reuse these indexes).
-                continue
+                continue;
             }
 
             match inner {
@@ -147,7 +148,7 @@ impl TypeName {
     }
 
     /// Fetch the definition of this type.
-    pub(crate) fn def<'tn>(&'tn self) -> TypeNameDef<'tn> {
+    pub(crate) fn def(&self) -> TypeNameDef<'_> {
         self.def_at(self.idx)
     }
 
@@ -164,25 +165,40 @@ impl TypeName {
 
     /// Take a registry and valid index into it, and copy the relevant entries into our own registry,
     /// returning the index at which the given entry ended up.
-    fn insert_entry_from_other_registry(&mut self, idx: usize, registry: &Registry, free_idxs: &mut &[usize]) -> usize {
-        let idx_to_use = free_idxs.get(0).map(|idx| {
+    fn insert_entry_from_other_registry(
+        &mut self,
+        idx: usize,
+        registry: &Registry,
+        free_idxs: &mut &[usize],
+    ) -> usize {
+        let idx_to_use = free_idxs.first().map(|idx| {
             *free_idxs = &free_idxs[1..];
             *idx
         });
 
         let new_inner = match &registry.get(idx).expect("type index used which doesn't exist") {
             TypeNameInner::Named { name, params } => {
-                let new_params = params.iter().map(|idx: &usize| self.insert_entry_from_other_registry(*idx, registry, free_idxs)).collect();
+                let new_params = params
+                    .iter()
+                    .map(|idx: &usize| {
+                        self.insert_entry_from_other_registry(*idx, registry, free_idxs)
+                    })
+                    .collect();
                 TypeNameInner::Named { name: name.clone(), params: new_params }
-            },
+            }
             TypeNameInner::Unnamed { params } => {
-                let new_params = params.iter().map(|idx: &usize| self.insert_entry_from_other_registry(*idx, registry, free_idxs)).collect();
+                let new_params = params
+                    .iter()
+                    .map(|idx: &usize| {
+                        self.insert_entry_from_other_registry(*idx, registry, free_idxs)
+                    })
+                    .collect();
                 TypeNameInner::Unnamed { params: new_params }
-            },
+            }
             TypeNameInner::Array { param, length } => {
                 let new_param = self.insert_entry_from_other_registry(*param, registry, free_idxs);
                 TypeNameInner::Array { param: new_param, length: *length }
-            },
+            }
         };
 
         // Reuse an existing space if possible, else push a new item to the end:
@@ -197,41 +213,28 @@ impl TypeName {
     }
 
     // Fetch (and expect to exist) a definition at some index.
-    fn def_at<'tn>(&'tn self, idx: usize) -> TypeNameDef<'tn> {
-        let entry = self.registry
-            .get(idx)
-            .expect("one item expected in Name");
+    fn def_at(&self, idx: usize) -> TypeNameDef<'_> {
+        let entry = self.registry.get(idx).expect("one item expected in Name");
 
         match entry {
             TypeNameInner::Named { name, params } => {
-                TypeNameDef::Named(NamedTypeDef {
-                    name,
-                    params,
-                    idx,
-                    handle: self
-                })
-            },
+                TypeNameDef::Named(NamedTypeDef { name, params, idx, handle: self })
+            }
             TypeNameInner::Unnamed { params } => {
-                TypeNameDef::Unnamed(UnnamedTypeDef {
-                    params,
-                    idx,
-                    handle: self
-                })
-            },
-            TypeNameInner::Array { param, length } => {
-                TypeNameDef::Array(ArrayTypeDef {
-                    param: *param,
-                    length: *length,
-                    idx,
-                    handle: self
-                })
-            },
+                TypeNameDef::Unnamed(UnnamedTypeDef { params, idx, handle: self })
+            }
+            TypeNameInner::Array { param, length } => TypeNameDef::Array(ArrayTypeDef {
+                param: *param,
+                length: *length,
+                idx,
+                handle: self,
+            }),
         }
     }
 }
 
 /// The definition of some type.
-#[derive(Debug,Copy,Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum TypeNameDef<'tn> {
     /// Types like `Vec<T>`, `Foo` and `path::to::Bar<A,B>`, `i32`, `bool`
     /// etc are _named_ types.
@@ -242,7 +245,7 @@ pub enum TypeNameDef<'tn> {
     Array(ArrayTypeDef<'tn>),
 }
 
-impl <'a> core::fmt::Display for TypeNameDef<'a> {
+impl<'a> core::fmt::Display for TypeNameDef<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             TypeNameDef::Named(named) => {
@@ -259,7 +262,7 @@ impl <'a> core::fmt::Display for TypeNameDef<'a> {
                     }
                     write!(f, ">")?;
                 }
-            },
+            }
             TypeNameDef::Unnamed(unnamed) => {
                 write!(f, "(")?;
                 if !unnamed.params.is_empty() {
@@ -273,16 +276,16 @@ impl <'a> core::fmt::Display for TypeNameDef<'a> {
                     }
                 }
                 write!(f, ")")?;
-            },
+            }
             TypeNameDef::Array(array) => {
                 write!(f, "[{}; {}]", array.param_def(), array.length())?;
-            },
+            }
         }
         Ok(())
     }
 }
 
-impl <'tn> TypeNameDef<'tn> {
+impl<'tn> TypeNameDef<'tn> {
     /// Convert this back into a [`TypeName`].
     pub fn into_type_name(self) -> TypeName {
         match self {
@@ -296,7 +299,7 @@ impl <'tn> TypeNameDef<'tn> {
     fn unwrap_named(self) -> NamedTypeDef<'tn> {
         match self {
             TypeNameDef::Named(a) => a,
-            _ => panic!("Cannot unwrap '{self:?}' into an NamedName")
+            _ => panic!("Cannot unwrap '{self:?}' into an NamedName"),
         }
     }
 
@@ -304,7 +307,7 @@ impl <'tn> TypeNameDef<'tn> {
     fn unwrap_unnamed(self) -> UnnamedTypeDef<'tn> {
         match self {
             TypeNameDef::Unnamed(a) => a,
-            _ => panic!("Cannot unwrap '{self:?}' into an UnnamedName")
+            _ => panic!("Cannot unwrap '{self:?}' into an UnnamedName"),
         }
     }
 
@@ -312,13 +315,13 @@ impl <'tn> TypeNameDef<'tn> {
     fn unwrap_array(self) -> ArrayTypeDef<'tn> {
         match self {
             TypeNameDef::Array(a) => a,
-            _ => panic!("Cannot unwrap '{self:?}' into an ArrayName")
+            _ => panic!("Cannot unwrap '{self:?}' into an ArrayName"),
         }
     }
 }
 
 /// The definition of a named type.
-#[derive(Debug,Copy,Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct NamedTypeDef<'tn> {
     name: &'tn str,
     params: &'tn Params,
@@ -326,13 +329,10 @@ pub struct NamedTypeDef<'tn> {
     idx: usize,
 }
 
-impl <'tn> NamedTypeDef<'tn> {
+impl<'tn> NamedTypeDef<'tn> {
     /// Convert this back into a [`TypeName`].
     pub fn into_type_name(self) -> TypeName {
-        TypeName {
-            registry: self.handle.registry.clone(),
-            idx: self.idx
-        }
+        TypeName { registry: self.handle.registry.clone(), idx: self.idx }
     }
 
     /// The type name.
@@ -341,37 +341,33 @@ impl <'tn> NamedTypeDef<'tn> {
     }
 
     /// Iterate over the type parameter definitions.
-    pub fn param_defs(&self) -> impl Iterator<Item=TypeNameDef<'tn>> {
+    pub fn param_defs(&self) -> impl Iterator<Item = TypeNameDef<'tn>> {
         self.params.iter().map(|idx| self.handle.def_at(*idx))
     }
 }
 
 /// The definition of an unnamed type.
-#[derive(Debug,Copy,Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct UnnamedTypeDef<'tn> {
     params: &'tn Params,
     handle: &'tn TypeName,
     idx: usize,
 }
 
-impl <'tn, 'a> UnnamedTypeDef<'tn> {
+impl<'tn> UnnamedTypeDef<'tn> {
     /// Convert this back into a [`TypeName`].
     pub fn into_type_name(self) -> TypeName {
-        TypeName {
-            registry: self.handle.registry.clone(),
-            idx: self.idx
-        }
+        TypeName { registry: self.handle.registry.clone(), idx: self.idx }
     }
 
     /// Iterate over the type parameter definitions
-    pub fn param_defs(&self) -> impl ExactSizeIterator<Item=TypeNameDef<'tn>> {
+    pub fn param_defs(&self) -> impl ExactSizeIterator<Item = TypeNameDef<'tn>> {
         self.params.iter().map(|idx| self.handle.def_at(*idx))
     }
 }
 
-
 /// The definition of an array type.
-#[derive(Debug,Copy,Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct ArrayTypeDef<'tn> {
     param: usize,
     length: usize,
@@ -379,13 +375,10 @@ pub struct ArrayTypeDef<'tn> {
     idx: usize,
 }
 
-impl <'tn> ArrayTypeDef<'tn> {
+impl<'tn> ArrayTypeDef<'tn> {
     /// Convert this back into a [`TypeName`].
     pub fn into_type_name(self) -> TypeName {
-        TypeName {
-            registry: self.handle.registry.clone(),
-            idx: self.idx
-        }
+        TypeName { registry: self.handle.registry.clone(), idx: self.idx }
     }
 
     /// The array length
@@ -397,7 +390,6 @@ impl <'tn> ArrayTypeDef<'tn> {
         self.handle.def_at(self.param)
     }
 }
-
 
 // Internal types used:
 type Registry = SmallVec<[TypeNameInner; 2]>;
@@ -425,8 +417,8 @@ pub enum TypeNameInner {
         /// The type in the array.
         param: usize,
         /// The fixed length of the array.
-        length: usize
-    }
+        length: usize,
+    },
 }
 
 // Logic for parsing strings into type names.
@@ -459,21 +451,29 @@ mod parser {
         InvalidName,
         #[display(fmt = "A closing `)` was missing when attempting to parse a tuple type name.")]
         ClosingParenMissing,
-        #[display(fmt = "A closing `>` was missing when attempting to parse the generics of a named type.")]
+        #[display(
+            fmt = "A closing `>` was missing when attempting to parse the generics of a named type."
+        )]
         ClosingAngleBracketMissing,
         #[display(fmt = "A closing `]` was missing when attempting to parse an array type.")]
         ClosingSquareBracketMissing,
         #[display(fmt = "The length of the array is invalid; expecting an unsigned integer.")]
-        InvalidUnsignedInt
+        InvalidUnsignedInt,
     }
 
-    pub fn parse_type_name<'a>(input: &mut StrTokens<'a>, registry: &mut Registry) -> Result<(), ParseError> {
+    pub fn parse_type_name(
+        input: &mut StrTokens<'_>,
+        registry: &mut Registry,
+    ) -> Result<(), ParseError> {
         let loc = input.location();
         try_parse_type_name(input, registry)
             .unwrap_or_else(|| Err(ParseError::new_at(ParseErrorKind::InvalidName, loc.offset())))
     }
 
-    fn try_parse_type_name<'a>(input: &mut StrTokens<'a>, registry: &mut Registry) -> Option<Result<(), ParseError>> {
+    fn try_parse_type_name(
+        input: &mut StrTokens<'_>,
+        registry: &mut Registry,
+    ) -> Option<Result<(), ParseError>> {
         yap::one_of!(input;
             parse_unnamed_into_type_name(input, registry),
             parse_array_into_type_name(input, registry),
@@ -482,22 +482,28 @@ mod parser {
     }
 
     // Parse a named type like Vec<bool>, i32, bool, Foo.
-    fn parse_named_into_type_name<'a>(input: &mut StrTokens<'a>, registry: &mut Registry) -> Option<Result<(), ParseError>> {
+    fn parse_named_into_type_name(
+        input: &mut StrTokens<'_>,
+        registry: &mut Registry,
+    ) -> Option<Result<(), ParseError>> {
         let name = parse_path(input);
         if name.is_empty() {
-            return None
+            return None;
         }
 
         skip_whitespace(input);
         if !input.token('<') {
             // No generics; just add the name to the registry
-            registry.push(TypeNameInner::Named { name: NameStr::from_str(name), params: Params::new() });
-            return Some(Ok(()))
+            registry.push(TypeNameInner::Named {
+                name: NameStr::from_str(name),
+                params: Params::new(),
+            });
+            return Some(Ok(()));
         }
 
         let params = match parse_comma_separated_type_names(input, registry) {
             Ok(params) => params,
-            Err(err) => return Some(Err(err))
+            Err(err) => return Some(Err(err)),
         };
 
         if !input.token('>') {
@@ -510,14 +516,17 @@ mod parser {
     }
 
     // Parse an unnamed (tuple) type like () or (bool, Foo, Bar<T>).
-    fn parse_unnamed_into_type_name<'a>(input: &mut StrTokens<'a>, registry: &mut Registry) -> Option<Result<(), ParseError>> {
+    fn parse_unnamed_into_type_name(
+        input: &mut StrTokens<'_>,
+        registry: &mut Registry,
+    ) -> Option<Result<(), ParseError>> {
         if !input.token('(') {
-            return None
+            return None;
         }
 
         let params = match parse_comma_separated_type_names(input, registry) {
             Ok(params) => params,
-            Err(err) => return Some(Err(err))
+            Err(err) => return Some(Err(err)),
         };
 
         if !input.token(')') {
@@ -530,15 +539,18 @@ mod parser {
     }
 
     // Parse a fixed length array like [Foo; 32].
-    fn parse_array_into_type_name<'a>(input: &mut StrTokens<'a>, registry: &mut Registry) -> Option<Result<(), ParseError>> {
+    fn parse_array_into_type_name(
+        input: &mut StrTokens<'_>,
+        registry: &mut Registry,
+    ) -> Option<Result<(), ParseError>> {
         if !input.token('[') {
-            return None
+            return None;
         }
 
         skip_whitespace(input);
         let param = match parse_type_name(input, registry) {
             Ok(()) => registry.len() - 1,
-            Err(e) => return Some(Err(e))
+            Err(e) => return Some(Err(e)),
         };
 
         skip_whitespace(input);
@@ -546,10 +558,13 @@ mod parser {
         skip_whitespace(input);
 
         let loc = input.location().offset();
-        let length: usize = match input.take_while(|toks| toks.is_numeric()).parse::<usize, String>() {
-            Ok(n) => n,
-            Err(_) => return Some(Err(ParseError::new_at(ParseErrorKind::InvalidUnsignedInt, loc)))
-        };
+        let length: usize =
+            match input.take_while(|toks| toks.is_numeric()).parse::<usize, String>() {
+                Ok(n) => n,
+                Err(_) => {
+                    return Some(Err(ParseError::new_at(ParseErrorKind::InvalidUnsignedInt, loc)))
+                }
+            };
 
         if !input.token(']') {
             let loc = input.location().offset();
@@ -561,7 +576,10 @@ mod parser {
     }
 
     // Parse a list of type names like Foo,Bar,usize. An empty list is allowed.
-    fn parse_comma_separated_type_names<'a>(input: &mut StrTokens<'a>, registry: &mut Registry) -> Result<Params, ParseError> {
+    fn parse_comma_separated_type_names(
+        input: &mut StrTokens<'_>,
+        registry: &mut Registry,
+    ) -> Result<Params, ParseError> {
         skip_whitespace(input);
 
         let mut params_iter = input.sep_by(
@@ -571,12 +589,7 @@ mod parser {
                 // If successful, type name will be last item in registry:
                 Some(res.map(|()| registry.len() - 1))
             },
-            |toks| {
-                toks.surrounded_by(
-                    |toks| toks.token(','),
-                    |toks| skip_whitespace(toks)
-                )
-            }
+            |toks| toks.surrounded_by(|toks| toks.token(','), |toks| skip_whitespace(toks)),
         );
 
         let mut params = Params::new();
@@ -595,37 +608,35 @@ mod parser {
 
     // Parse the name/path of a type like `Foo`` or `a::b::Foo`.
     fn parse_path<'a>(input: &mut StrTokens<'a>) -> &'a str {
-        str_slice_from(
-            input,
-            |toks| {
-                toks.sep_by(
-                    |t| {
-                        // First char should exist and be a letter.
-                        if !t.peek()?.is_alphabetic() {
-                            return None
-                        }
-                        // Rest can be letters or numbers.
-                        t.skip_while(|c| c.is_alphanumeric());
-                        Some(())
-                    },
-                    |t| {
-                        // Our separator is `::`.
-                        t.tokens("::".chars())
+        str_slice_from(input, |toks| {
+            toks.sep_by(
+                |t| {
+                    // First char should exist and be a letter.
+                    if !t.peek()?.is_alphabetic() {
+                        return None;
                     }
-                ).consume();
-            }
-        )
+                    // Rest can be letters or numbers.
+                    t.skip_while(|c| c.is_alphanumeric());
+                    Some(())
+                },
+                |t| {
+                    // Our separator is `::`.
+                    t.tokens("::".chars())
+                },
+            )
+            .consume();
+        })
     }
 
     // Skip over any whitespace, ignoring it.
-    fn skip_whitespace<'a>(input: &mut StrTokens<'a>) {
+    fn skip_whitespace(input: &mut StrTokens<'_>) {
         input.skip_while(|t| t.is_whitespace());
     }
 
     // Return the string slice that encompasses the provided parsing function given.
     fn str_slice_from<'a, F>(input: &mut StrTokens<'a>, f: F) -> &'a str
     where
-        F: FnOnce(&mut StrTokens<'a>)
+        F: FnOnce(&mut StrTokens<'a>),
     {
         let before = input.remaining();
         f(input);
@@ -638,15 +649,15 @@ mod parser {
 #[cfg(test)]
 mod test {
     use super::*;
-    use alloc::string::ToString;
     use alloc::borrow::ToOwned;
-    use alloc::vec::Vec;
+    use alloc::string::ToString;
     use alloc::vec;
+    use alloc::vec::Vec;
 
     fn expect_parse(input: &str) -> TypeName {
         match TypeName::parse(input) {
             Ok(tn) => tn,
-            Err(e) => panic!("parsing '{input}' failed: {e}")
+            Err(e) => panic!("parsing '{input}' failed: {e}"),
         }
     }
 
@@ -719,14 +730,17 @@ mod test {
 
         let tn = expect_parse("Foo<A>");
         let def = tn.def().unwrap_named();
-        assert!(def.name() == "Foo" && def.param_defs().next().unwrap().unwrap_named().name() == "A");
+        assert!(
+            def.name() == "Foo" && def.param_defs().next().unwrap().unwrap_named().name() == "A"
+        );
 
         let tn = expect_parse("()");
         let def = tn.def().unwrap_unnamed();
         assert!(def.param_defs().count() == 0);
 
         let tn = expect_parse("(bool, u32, Bar<A>)");
-        let param_names: Vec<String> = tn.def()
+        let param_names: Vec<String> = tn
+            .def()
             .unwrap_unnamed()
             .param_defs()
             .map(|p| p.unwrap_named().name().to_owned())
@@ -789,7 +803,7 @@ mod test {
             "[Foo<A>; 32]",
             "()",
             "(A, B, C)",
-            "Foo<(A, B, C<D>), [u8; 32], Bar<T>>"
+            "Foo<(A, B, C<D>), [u8; 32], Bar<T>>",
         ];
 
         for ty_name_str in ty_name_strs {

@@ -1,11 +1,11 @@
 //! This module provides a [`TypeShape`] enum, which describes the shape of a type, or in other
 //! words, how it should be SCALE encoded/decoded.
 
-use alloc::vec::Vec;
-use alloc::string::String;
 use crate::type_name::TypeName;
+use alloc::string::String;
+use alloc::vec::Vec;
 
-pub use scale_type_resolver::{BitsOrderFormat,BitsStoreFormat,Primitive};
+pub use scale_type_resolver::{BitsOrderFormat, BitsStoreFormat, Primitive};
 
 /// This describes the shape of a type, with the aim of providing enough information
 /// that we know how to SCALE encode or decode some named type.
@@ -25,7 +25,7 @@ pub enum TypeShape {
         /// `bitvec::order::Lsb0` or `bitvec::order::Msb0`.
         order: TypeName,
         /// The store type is expected to resolve to a primitive U8/U16/U32/U64.
-        store: TypeName
+        store: TypeName,
     },
     /// A compact encoded type.
     Compact(TypeName),
@@ -41,7 +41,7 @@ pub struct Field {
     /// The struct field name.
     pub name: String,
     /// The shape of the field value.
-    pub value: TypeName
+    pub value: TypeName,
 }
 
 /// An enum variant.
@@ -51,7 +51,7 @@ pub struct Variant {
     /// The variant name.
     pub name: String,
     /// Shape of the variant's arguments.
-    pub value: VariantDesc
+    pub value: VariantDesc,
 }
 
 /// The shape of the variant.
