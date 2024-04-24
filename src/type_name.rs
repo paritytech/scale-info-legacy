@@ -142,7 +142,7 @@ impl TypeName {
         self.def_at(self.idx)
     }
 
-    /// Insert a foreign [`NameShape`] into this type's registry, returning the index that it was inserted at.
+    /// Insert a foreign [`TypeNameDef`] into this type's registry, returning the index that it was inserted at.
     fn insert_shape(&mut self, ty: TypeNameDef<'_>, free_idxs: &[usize]) -> usize {
         let (idx, registry) = match ty {
             TypeNameDef::Named(t) => (t.idx, &t.handle.registry),

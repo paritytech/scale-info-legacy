@@ -35,7 +35,7 @@ pub struct TypeDescription {
 }
 
 impl TypeDescription {
-    /// Create a [`Ty`] by providing a name like "Bar" or "Foo<A, B>" and a description of
+    /// Create a [`TypeDescription`] by providing a name like "Bar" or "Foo<A, B>" and a description of
     /// the shape of the type with this name.
     pub fn new(name_with_params: impl AsRef<str>, shape: TypeShape) -> Result<Self, ParseError> {
         // The name we are looking for is just a restricted form of a ty_name, so we
@@ -74,7 +74,7 @@ impl TypeDescription {
     }
 }
 
-/// An error creating some type [`Ty`].
+/// An error creating some type [`TypeDescription`].
 #[allow(missing_docs)]
 #[derive(Debug, derive_more::Display)]
 pub enum ParseError {
