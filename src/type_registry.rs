@@ -202,7 +202,7 @@ impl TypeRegistry {
     ) -> Result<V::Value, TypeRegistryResolveError> {
         match type_id.def() {
             TypeNameDef::Named(ty) => {
-                let Some(type_info) = self.types.get(ty.name()) else {
+                let Some((ty_name, type_info)) = self.types.get_key_value(ty.name()) else {
                     return Err(TypeRegistryResolveError::TypeNotFound(ty.name().to_owned()));
                 };
 
@@ -233,7 +233,7 @@ impl TypeRegistry {
                 // with the relevant details.
                 match &type_info.desc {
                     TypeShape::StructOf(fields) => {
-                        let path_iter = ty.name().split("::");
+                        let path_iter = ty_name.split("::");
                         let fields_iter = fields.iter().map(|field| Field {
                             name: Some(&field.name),
                             id: apply_param_mapping(field.value.clone(), &param_mapping),
@@ -246,7 +246,7 @@ impl TypeRegistry {
                         Ok(visitor.visit_tuple(type_ids))
                     }
                     TypeShape::EnumOf(variants) => {
-                        let path_iter = ty.name().split("::");
+                        let path_iter = ty_name.split("::");
                         let variants_iter = variants.iter().map(|var| Variant {
                             index: var.index,
                             name: &var.name,
@@ -273,7 +273,7 @@ impl TypeRegistry {
                         Ok(visitor.visit_variant(path_iter, variants_iter))
                     }
                     TypeShape::SequenceOf(seq) => {
-                        let path_iter = ty.name().split("::");
+                        let path_iter = ty_name.split("::");
                         let type_id = apply_param_mapping(seq.clone(), &param_mapping);
                         Ok(visitor.visit_sequence(path_iter, type_id))
                     }
