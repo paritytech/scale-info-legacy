@@ -36,6 +36,17 @@ pub enum TypeRegistryResolveError {
     UnexpectedBitStoreType,
 }
 
+/// An error when using `TypeRegistry::try_resolve_type()`. This returns the visitor if
+/// the type wasn't found, allowing us to use it again with a different registry or whatever.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, derive_more::Display)]
+pub enum TypeRegistryTryResolveError<Visitor> {
+    #[display(fmt = "Type '{name}' not found")]
+    TypeNotFound { name: String, visitor: Visitor },
+    #[display(fmt = "{_0}")]
+    Other(TypeRegistryResolveError),
+}
+
 /// The type info stored in the registry against a given named type.
 struct TypeInfo {
     // The generic param names that may be used in the type description below.
@@ -200,10 +211,31 @@ impl TypeRegistry {
         type_id: TypeName,
         visitor: V,
     ) -> Result<V::Value, TypeRegistryResolveError> {
+        match self.try_resolve_type(type_id, visitor) {
+            Err(TypeRegistryTryResolveError::TypeNotFound { visitor, .. }) => {
+                Ok(visitor.visit_not_found())
+            }
+            Err(TypeRegistryTryResolveError::Other(e)) => Err(e),
+            Ok(val) => Ok(val),
+        }
+    }
+
+    /// Like [`TypeRegistry::resolve_type()`], but returns the visitor again if the type
+    /// wasn't found (along with the name of the type we didn't find), rather than consuming
+    /// the visitor by calling `.visit_not_found()` on it. THis allows you to re-use the visitor,
+    /// or just learn a little bit more about the failure.
+    pub fn try_resolve_type<'this, V: ResolvedTypeVisitor<'this, TypeId = TypeName>>(
+        &'this self,
+        type_id: TypeName,
+        visitor: V,
+    ) -> Result<V::Value, TypeRegistryTryResolveError<V>> {
         match type_id.def() {
             TypeNameDef::Named(ty) => {
                 let Some((ty_name, type_info)) = self.types.get_key_value(ty.name()) else {
-                    return Err(TypeRegistryResolveError::TypeNotFound(ty.name().to_owned()));
+                    return Err(TypeRegistryTryResolveError::TypeNotFound {
+                        name: ty.name().to_owned(),
+                        visitor,
+                    });
                 };
 
                 let num_input_params = ty.param_defs().count();
@@ -212,11 +244,13 @@ impl TypeRegistry {
                 // Complain if you try asking for a type and don't provide the expected number
                 // of parameters in place of that types generics.
                 if num_input_params != num_expected_params {
-                    return Err(TypeRegistryResolveError::TypeParamsMismatch {
-                        type_name: ty.name().to_owned(),
-                        expected_params: num_expected_params,
-                        provided_params: num_input_params,
-                    });
+                    return Err(TypeRegistryTryResolveError::Other(
+                        TypeRegistryResolveError::TypeParamsMismatch {
+                            type_name: ty.name().to_owned(),
+                            expected_params: num_expected_params,
+                            provided_params: num_input_params,
+                        },
+                    ));
                 }
 
                 // Build a mapping from generic ident to the concrete type def we've been given.
@@ -284,12 +318,34 @@ impl TypeRegistry {
                         let order_visitor = order_visitor();
                         let store_visitor = store_visitor();
 
-                        let order_format = self
-                            .resolve_type(order, order_visitor)?
-                            .ok_or(TypeRegistryResolveError::UnexpectedBitOrderType)?;
-                        let store_format = self
-                            .resolve_type(store, store_visitor)?
-                            .ok_or(TypeRegistryResolveError::UnexpectedBitStoreType)?;
+                        macro_rules! resolve_bits {
+                            ($ty:ident, $visitor:ident, $err_variant:ident) => {{
+                                match self.try_resolve_type($ty, $visitor) {
+                                    Ok(Some(v)) => v,
+                                    Ok(None) => {
+                                        return Err(TypeRegistryTryResolveError::Other(
+                                            TypeRegistryResolveError::$err_variant,
+                                        ))
+                                    }
+                                    Err(TypeRegistryTryResolveError::Other(e)) => {
+                                        return Err(TypeRegistryTryResolveError::Other(e))
+                                    }
+                                    Err(TypeRegistryTryResolveError::TypeNotFound {
+                                        name, ..
+                                    }) => {
+                                        return Err(TypeRegistryTryResolveError::TypeNotFound {
+                                            name,
+                                            visitor,
+                                        })
+                                    }
+                                }
+                            }};
+                        }
+
+                        let order_format =
+                            resolve_bits!(order, order_visitor, UnexpectedBitOrderType);
+                        let store_format =
+                            resolve_bits!(store, store_visitor, UnexpectedBitStoreType);
 
                         Ok(visitor.visit_bit_sequence(store_format, order_format))
                     }
@@ -300,7 +356,7 @@ impl TypeRegistry {
                     TypeShape::Primitive(p) => Ok(visitor.visit_primitive(*p)),
                     TypeShape::AliasOf(ty) => {
                         let type_id = apply_param_mapping(ty.clone(), &param_mapping);
-                        self.resolve_type(type_id, visitor)
+                        self.try_resolve_type(type_id, visitor)
                     }
                 }
             }
