@@ -688,4 +688,47 @@ mod test {
             assert_eq!(to_resolved_info_str(name, &types), expected);
         }
     }
+
+    #[test]
+    fn resolve_aliases() {
+        let mut types = TypeRegistry::basic();
+
+        // We test a bunch of things here:
+        // - Multiple indirection of aliases,
+        // - Aliases with generics,
+        // - That bitvec resolving works through aliases.
+        types.insert(
+            TypeDescription::new(
+                "BitVecLsb0Alias1",
+                TypeShape::AliasOf(TypeName::parse_unwrap("bitvec::order::Lsb0")),
+            )
+            .unwrap(),
+        );
+        types.insert(
+            TypeDescription::new(
+                "BitVecLsb0Alias2",
+                TypeShape::AliasOf(TypeName::parse_unwrap("BitVecLsb0Alias1")),
+            )
+            .unwrap(),
+        );
+        types.insert(
+            TypeDescription::new("AliasForU16", TypeShape::AliasOf(TypeName::parse_unwrap("u16")))
+                .unwrap(),
+        );
+        types.insert(
+            TypeDescription::new(
+                "AliasForBitVec<S,O>",
+                TypeShape::AliasOf(TypeName::parse_unwrap("bitvec::vec::BitVec<S,O>")),
+            )
+            .unwrap(),
+        );
+
+        let resolved =
+            to_resolved_info_str("AliasForBitVec<AliasForU16, BitVecLsb0Alias2>", &types);
+
+        assert_eq!(
+            resolved,
+            ResolvedTypeInfo::BitSequence(BitsStoreFormat::U16, BitsOrderFormat::Lsb0)
+        );
+    }
 }
