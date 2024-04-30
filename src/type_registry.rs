@@ -194,9 +194,8 @@ impl TypeRegistry {
     /// // Name a type that you want to know how to encode/decode:
     /// let name = TypeName::parse("Vec<(bool, u32)>").unwrap();
     ///
-    /// // Provide a dumb visitor (ie set of callbacks) to tell us about the type that
-    /// // we query. Here, all we do is return true if the type is a sequence and
-    /// // false otherwise.
+    /// // Here we provide a dumb visitor (ie set of callbacks) which will return
+    /// // true if the type we ask about is a sequence, and false otherwise.
     /// let my_visitor = visitor::new((), |_, _| false)
     ///     .visit_sequence(|_, _, _| true);
     ///
@@ -222,7 +221,7 @@ impl TypeRegistry {
 
     /// Like [`TypeRegistry::resolve_type()`], but returns the visitor again if the type
     /// wasn't found (along with the name of the type we didn't find), rather than consuming
-    /// the visitor by calling `.visit_not_found()` on it. THis allows you to re-use the visitor,
+    /// the visitor by calling `.visit_not_found()` on it. This allows you to re-use the visitor,
     /// or just learn a little bit more about the failure.
     pub fn try_resolve_type<'this, V: ResolvedTypeVisitor<'this, TypeId = TypeName>>(
         &'this self,
@@ -318,7 +317,10 @@ impl TypeRegistry {
                         let order_visitor = order_visitor();
                         let store_visitor = store_visitor();
 
-                        macro_rules! resolve_bits {
+                        // This is quite verbose because, in the event of an error, we need to
+                        // change the visitor type being handed back while avoiding consuming it
+                        // in something like a `.map_err()` closure.
+                        macro_rules! resolve_format {
                             ($ty:ident, $visitor:ident, $err_variant:ident) => {{
                                 match self.try_resolve_type($ty, $visitor) {
                                     Ok(Some(v)) => v,
@@ -343,9 +345,9 @@ impl TypeRegistry {
                         }
 
                         let order_format =
-                            resolve_bits!(order, order_visitor, UnexpectedBitOrderType);
+                            resolve_format!(order, order_visitor, UnexpectedBitOrderType);
                         let store_format =
-                            resolve_bits!(store, store_visitor, UnexpectedBitStoreType);
+                            resolve_format!(store, store_visitor, UnexpectedBitStoreType);
 
                         Ok(visitor.visit_bit_sequence(store_format, order_format))
                     }
