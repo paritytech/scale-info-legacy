@@ -9,6 +9,7 @@ pub use scale_type_resolver::{BitsOrderFormat, BitsStoreFormat, Primitive};
 
 /// This describes the shape of a type, with the aim of providing enough information
 /// that we know how to SCALE encode or decode some named type.
+#[derive(Debug, Clone)]
 pub enum TypeShape {
     /// A "named composite" type in scale-info. This contains a list
     /// of fields.
@@ -37,6 +38,7 @@ pub enum TypeShape {
 }
 
 /// A struct field.
+#[derive(Debug, Clone)]
 pub struct Field {
     /// The struct field name.
     pub name: String,
@@ -45,6 +47,7 @@ pub struct Field {
 }
 
 /// An enum variant.
+#[derive(Debug, Clone)]
 pub struct Variant {
     /// The variant index.
     pub index: u8,
@@ -55,6 +58,7 @@ pub struct Variant {
 }
 
 /// The shape of the variant.
+#[derive(Debug, Clone)]
 pub enum VariantDesc {
     /// named variant fields are basically a struct.
     StructOf(Vec<Field>),

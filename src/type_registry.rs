@@ -7,6 +7,7 @@ use crate::type_shape::{self, Primitive, TypeShape, VariantDesc};
 use alloc::borrow::ToOwned;
 use alloc::string::String;
 use alloc::vec;
+use core::hash::Hash;
 use core::iter::ExactSizeIterator;
 use hashbrown::HashMap;
 use scale_type_resolver::{
@@ -48,11 +49,30 @@ pub enum TypeRegistryTryResolveError<Visitor> {
 }
 
 /// The type info stored in the registry against a given named type.
+#[derive(Debug)]
 struct TypeInfo {
     // The generic param names that may be used in the type description below.
     params: SmallVec<[String; 4]>,
     // A description of the shape of the type.
     desc: TypeShape,
+}
+
+/// Key pointing at named types we've stored.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TypeKey {
+    pallet: Option<String>,
+    name: String,
+}
+
+impl core::hash::Hash for TypeKey {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        hash_key(self.pallet.as_deref(), &self.name, state);
+    }
+}
+
+fn hash_key<H: core::hash::Hasher>(pallet: Option<&str>, name: &str, state: &mut H) {
+    pallet.hash(state);
+    name.hash(state);
 }
 
 /// A type registry that stores a mapping from type names to a description of how to SCALE
@@ -67,7 +87,7 @@ pub struct TypeRegistry {
     // A hash from the name of a type (like `Vec` or `usize`) to a description
     // of the shape of the type (which may involve generic params or just be
     // concrete types or aliases to other types).
-    types: HashMap<String, TypeInfo>,
+    types: HashMap<TypeKey, TypeInfo>,
 }
 
 impl TypeRegistry {
@@ -177,8 +197,8 @@ impl TypeRegistry {
     /// registry.insert(desc);
     /// ```
     pub fn insert(&mut self, ty: TypeDescription) {
-        let (name, params, desc) = ty.into_parts();
-        self.types.insert(name, TypeInfo { desc, params });
+        let (pallet, name, params, desc) = ty.into_parts();
+        self.types.insert(TypeKey { pallet, name }, TypeInfo { desc, params });
     }
 
     /// Resolve some type information by providing a [`TypeName`], which is the
@@ -228,9 +248,22 @@ impl TypeRegistry {
         type_id: TypeName,
         visitor: V,
     ) -> Result<V::Value, TypeRegistryTryResolveError<V>> {
+        // The pallet that our lookups will be performed within:
+        let pallet = type_id.pallet();
+
         match type_id.def() {
             TypeNameDef::Named(ty) => {
-                let Some((ty_name, type_info)) = self.types.get_key_value(ty.name()) else {
+                let Some((ty_key, type_info)) =
+                    lookup(pallet, ty.name(), &self.types).or_else(|| {
+                        if pallet.is_some() {
+                            // We did a scoped lookup and found nothing, so now try without scope.
+                            lookup(None, ty.name(), &self.types)
+                        } else {
+                            // We did an un-scoped lookup and found nothing, so give up!
+                            None
+                        }
+                    })
+                else {
                     return Err(TypeRegistryTryResolveError::TypeNotFound {
                         name: ty.name().to_owned(),
                         visitor,
@@ -266,20 +299,21 @@ impl TypeRegistry {
                 // with the relevant details.
                 match &type_info.desc {
                     TypeShape::StructOf(fields) => {
-                        let path_iter = ty_name.split("::");
+                        let path_iter = ty_key.name.split("::");
                         let fields_iter = fields.iter().map(|field| Field {
                             name: Some(&field.name),
-                            id: apply_param_mapping(field.value.clone(), &param_mapping),
+                            id: apply_param_mapping(pallet, field.value.clone(), &param_mapping),
                         });
                         Ok(visitor.visit_composite(path_iter, fields_iter))
                     }
                     TypeShape::TupleOf(tys) => {
-                        let type_ids =
-                            tys.iter().map(|ty| apply_param_mapping(ty.clone(), &param_mapping));
+                        let type_ids = tys
+                            .iter()
+                            .map(|ty| apply_param_mapping(pallet, ty.clone(), &param_mapping));
                         Ok(visitor.visit_tuple(type_ids))
                     }
                     TypeShape::EnumOf(variants) => {
-                        let path_iter = ty_name.split("::");
+                        let path_iter = ty_key.name.split("::");
                         let variants_iter = variants.iter().map(|var| Variant {
                             index: var.index,
                             name: &var.name,
@@ -288,6 +322,7 @@ impl TypeRegistry {
                                     let field_iter = fields.iter().map(|field| Field {
                                         name: Some(&field.name),
                                         id: apply_param_mapping(
+                                            pallet,
                                             field.value.clone(),
                                             &param_mapping,
                                         ),
@@ -297,7 +332,7 @@ impl TypeRegistry {
                                 VariantDesc::TupleOf(fields) => {
                                     let field_iter = fields.iter().map(|ty| Field {
                                         name: None,
-                                        id: apply_param_mapping(ty.clone(), &param_mapping),
+                                        id: apply_param_mapping(pallet, ty.clone(), &param_mapping),
                                     });
                                     Either::B(field_iter)
                                 }
@@ -306,13 +341,13 @@ impl TypeRegistry {
                         Ok(visitor.visit_variant(path_iter, variants_iter))
                     }
                     TypeShape::SequenceOf(seq) => {
-                        let path_iter = ty_name.split("::");
-                        let type_id = apply_param_mapping(seq.clone(), &param_mapping);
+                        let path_iter = ty_key.name.split("::");
+                        let type_id = apply_param_mapping(pallet, seq.clone(), &param_mapping);
                         Ok(visitor.visit_sequence(path_iter, type_id))
                     }
                     TypeShape::BitSequence { order, store } => {
-                        let order = apply_param_mapping(order.clone(), &param_mapping);
-                        let store = apply_param_mapping(store.clone(), &param_mapping);
+                        let order = apply_param_mapping(pallet, order.clone(), &param_mapping);
+                        let store = apply_param_mapping(pallet, store.clone(), &param_mapping);
 
                         let order_visitor = order_visitor();
                         let store_visitor = store_visitor();
@@ -352,12 +387,12 @@ impl TypeRegistry {
                         Ok(visitor.visit_bit_sequence(store_format, order_format))
                     }
                     TypeShape::Compact(ty) => {
-                        let type_id = apply_param_mapping(ty.clone(), &param_mapping);
+                        let type_id = apply_param_mapping(pallet, ty.clone(), &param_mapping);
                         Ok(visitor.visit_compact(type_id))
                     }
                     TypeShape::Primitive(p) => Ok(visitor.visit_primitive(*p)),
                     TypeShape::AliasOf(ty) => {
-                        let type_id = apply_param_mapping(ty.clone(), &param_mapping);
+                        let type_id = apply_param_mapping(pallet, ty.clone(), &param_mapping);
                         self.try_resolve_type(type_id, visitor)
                     }
                 }
@@ -421,6 +456,28 @@ impl TypeResolver for TypeRegistry {
     }
 }
 
+// We store complex owned keys in our hashmap, but want to do lookups using borrowed values.
+// That's surprisingly difficult to do! This is one approach; manually hash the borrowed values
+// and then lookup corresponding entries by hash, manually comparing keys to find the right one.
+// We need to ensure that the way we are hashing things here corresponds to hashing of `TypeKey`,
+// so we manually impl `Hash` and use the same function in both places.
+fn lookup<'map>(
+    pallet: Option<&str>,
+    name: &str,
+    map: &'map HashMap<TypeKey, TypeInfo>,
+) -> Option<(&'map TypeKey, &'map TypeInfo)> {
+    // Manually construct the key hash; pallet first and then name due to struct order.
+    let hash = {
+        use core::hash::{BuildHasher, Hasher};
+        let mut state = map.hasher().build_hasher();
+        hash_key(pallet, name, &mut state);
+        state.finish()
+    };
+
+    // Look up the entry by hash, and then compare keys we get back to find the matching key.
+    map.raw_entry().from_hash(hash, |k| k.name == name && k.pallet.as_deref() == pallet)
+}
+
 // Dev note: this (and the store_visitor below) must be in a separate fn and not in-line so
 // that the compiler can generate one exact type for the visitor. If it was written in line,
 // you'd hit a recursion limit because each creation of the visitor would have a unique type,
@@ -471,10 +528,19 @@ fn store_visitor<'resolver>() -> impl scale_type_resolver::ResolvedTypeVisitor<
 /// Takes a TypeName and a mapping from generic ident to new defs, and returns a new TypeName where
 /// said generic params are replaced with concrete types.
 fn apply_param_mapping(
+    pallet: Option<&str>,
     ty: TypeName,
     param_mapping: &SmallVec<[(&str, TypeNameDef<'_>); 4]>,
 ) -> TypeName {
-    param_mapping.iter().fold(ty, |ty, (ident, def)| ty.with_substitution(ident, *def))
+    let new_ty =
+        param_mapping.iter().fold(ty, |ty, (ident, def)| ty.with_substitution(ident, *def));
+
+    // Scope lookups of the new type name to whatever pallet the original was defined in
+    if let Some(pallet) = pallet {
+        new_ty.in_pallet(pallet)
+    } else {
+        new_ty
+    }
 }
 
 // A quick enum iterator to be able to handle two branches without boxing, above.
@@ -730,5 +796,63 @@ mod test {
             resolved,
             ResolvedTypeInfo::BitSequence(BitsStoreFormat::U16, BitsOrderFormat::Lsb0)
         );
+    }
+
+    #[test]
+    fn resolve_pallet_scoped_types() {
+        const PALLET: &str = "balances";
+        let mut types = TypeRegistry::empty();
+
+        // Global types
+        types.insert(TypeDescription::new("u16", TypeShape::Primitive(Primitive::U16)).unwrap());
+        types.insert(
+            TypeDescription::new("Primitive", TypeShape::Primitive(Primitive::U16)).unwrap(),
+        );
+
+        // Type in balances pallet to override it. (u128, not u16 here)
+        types.insert(
+            TypeDescription::new("Primitive", TypeShape::Primitive(Primitive::U128))
+                .unwrap()
+                .in_pallet(PALLET),
+        );
+
+        // A couple of composite scoped types:
+        types.insert(
+            TypeDescription::new("Foo<T>", TypeShape::SequenceOf(TypeName::parse_unwrap("T")))
+                .unwrap()
+                .in_pallet(PALLET),
+        );
+        types.insert(
+            TypeDescription::new("Bar<T>", TypeShape::SequenceOf(TypeName::parse_unwrap("T")))
+                .unwrap()
+                .in_pallet(PALLET),
+        );
+
+        // Now, try resolving some types in the context of the "balances" pallet to check that we use scoped types appropriately.
+        let scoped_tests = [
+            // Will still find global types if not overridden:
+            ("u16", ResolvedTypeInfo::Primitive(Primitive::U16)),
+            // Will use overridden pallet scoped types:
+            ("Primitive", ResolvedTypeInfo::Primitive(Primitive::U128)),
+            // Pallet scoped-ness is preserved through complex type lookups:
+            (
+                "Foo<Primitive>",
+                ResolvedTypeInfo::SequenceOf(Box::new(ResolvedTypeInfo::Primitive(
+                    Primitive::U128,
+                ))),
+            ),
+            (
+                "Foo<Bar<Primitive>>",
+                ResolvedTypeInfo::SequenceOf(Box::new(ResolvedTypeInfo::SequenceOf(Box::new(
+                    ResolvedTypeInfo::Primitive(Primitive::U128),
+                )))),
+            ),
+        ];
+
+        for (input, expected) in scoped_tests {
+            let scoped_name = TypeName::parse_unwrap(input).in_pallet("balances");
+            let actual = to_resolved_info(scoped_name, &types);
+            assert_eq!(expected, actual, "error with type name {input}");
+        }
     }
 }

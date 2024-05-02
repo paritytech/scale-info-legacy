@@ -1,7 +1,7 @@
 //! This module provides a struct, [`TypeName`]. This struct represents a single concrete type
 //! that can be looked up in the [`crate::TypeRegistry`].
 
-use alloc::string::String;
+use alloc::{borrow::ToOwned, string::String};
 use smallstr::SmallString;
 use smallvec::SmallVec;
 
@@ -27,6 +27,10 @@ pub use parser::{ParseError, ParseErrorKind};
 pub struct TypeName {
     registry: Registry,
     idx: usize,
+    // Setting this means that when we try to resolve this type, we'll
+    // look at types defined within the given pallet before considering
+    // any global types.
+    pallet: Option<String>,
 }
 
 // We only implement this because `scale_type_resolver::TypeResolver` requires
@@ -36,7 +40,7 @@ impl Default for TypeName {
         // Various methods expect the registry to have at least one type in it,
         // so we set the type to be the empty unit type.
         let unit_type = TypeNameInner::Unnamed { params: Params::new() };
-        Self { registry: Registry::from_iter([unit_type]), idx: 0 }
+        Self { registry: Registry::from_iter([unit_type]), idx: 0, pallet: None }
     }
 }
 
@@ -73,7 +77,21 @@ impl TypeName {
             // we added is always the outermost one we want to point to.
             idx: registry.len() - 1,
             registry,
+            pallet: None,
         })
+    }
+
+    /// Perform a lookup of this type name in the context of some pallet. This means that
+    /// types which are defined to exist only within the given pallet will be considered
+    /// before any global types.
+    pub fn in_pallet(mut self, pallet_name: impl Into<String>) -> TypeName {
+        self.pallet = Some(pallet_name.into());
+        self
+    }
+
+    /// The pallet that we should perform this type lookup in.
+    pub(crate) fn pallet(&self) -> Option<&str> {
+        self.pallet.as_deref()
     }
 
     /// Substitute a named type with another. This is useful if we have a type name
@@ -99,7 +117,7 @@ impl TypeName {
         }
 
         // Insert the replacement type, returning the index to it:
-        let replacement_idx = self.insert_shape(replacement, &indexes_to_replace);
+        let replacement_idx = self.insert_def(replacement, &indexes_to_replace);
 
         // A couple of helpers to replace any params found in indexes_to_replace with the replacement_idx.
         let update_param = |param: &mut usize| {
@@ -143,7 +161,7 @@ impl TypeName {
     }
 
     /// Insert a foreign [`TypeNameDef`] into this type's registry, returning the index that it was inserted at.
-    fn insert_shape(&mut self, ty: TypeNameDef<'_>, free_idxs: &[usize]) -> usize {
+    fn insert_def(&mut self, ty: TypeNameDef<'_>, free_idxs: &[usize]) -> usize {
         let (idx, registry) = match ty {
             TypeNameDef::Named(t) => (t.idx, &t.handle.registry),
             TypeNameDef::Unnamed(t) => (t.idx, &t.handle.registry),
@@ -208,15 +226,15 @@ impl TypeName {
 
         match entry {
             TypeNameInner::Named { name, params } => {
-                TypeNameDef::Named(NamedTypeDef { name, params, idx, handle: self })
+                TypeNameDef::Named(NamedTypeDef { idx, name, params, handle: self })
             }
             TypeNameInner::Unnamed { params } => {
-                TypeNameDef::Unnamed(UnnamedTypeDef { params, idx, handle: self })
+                TypeNameDef::Unnamed(UnnamedTypeDef { idx, params, handle: self })
             }
             TypeNameInner::Array { param, length } => TypeNameDef::Array(ArrayTypeDef {
+                idx,
                 param: *param,
                 length: *length,
-                idx,
                 handle: self,
             }),
         }
@@ -322,7 +340,11 @@ pub struct NamedTypeDef<'tn> {
 impl<'tn> NamedTypeDef<'tn> {
     /// Convert this back into a [`TypeName`].
     pub fn into_type_name(self) -> TypeName {
-        TypeName { registry: self.handle.registry.clone(), idx: self.idx }
+        TypeName {
+            pallet: self.handle.pallet.to_owned(),
+            registry: self.handle.registry.clone(),
+            idx: self.idx,
+        }
     }
 
     /// The type name.
@@ -347,7 +369,11 @@ pub struct UnnamedTypeDef<'tn> {
 impl<'tn> UnnamedTypeDef<'tn> {
     /// Convert this back into a [`TypeName`].
     pub fn into_type_name(self) -> TypeName {
-        TypeName { registry: self.handle.registry.clone(), idx: self.idx }
+        TypeName {
+            pallet: self.handle.pallet.to_owned(),
+            registry: self.handle.registry.clone(),
+            idx: self.idx,
+        }
     }
 
     /// Iterate over the type parameter definitions
@@ -368,7 +394,11 @@ pub struct ArrayTypeDef<'tn> {
 impl<'tn> ArrayTypeDef<'tn> {
     /// Convert this back into a [`TypeName`].
     pub fn into_type_name(self) -> TypeName {
-        TypeName { registry: self.handle.registry.clone(), idx: self.idx }
+        TypeName {
+            pallet: self.handle.pallet.to_owned(),
+            registry: self.handle.registry.clone(),
+            idx: self.idx,
+        }
     }
 
     /// The array length
