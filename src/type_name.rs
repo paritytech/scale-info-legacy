@@ -1,3 +1,18 @@
+// Copyright (C) 2024 Parity Technologies (UK) Ltd. (admin@parity.io)
+// This file is a part of the scale-encode crate.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//         http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 //! This module provides a struct, [`TypeName`]. This struct represents a single concrete type
 //! that can be looked up in the [`crate::TypeRegistry`].
 
@@ -681,6 +696,13 @@ mod test {
         }
     }
 
+    fn expect_parse_fail(input: &str) {
+        match TypeName::parse(input) {
+            Ok(tn) => panic!("parsing '{input}' is expected to have failed, but got {tn:?}"),
+            Err(_e) => {}
+        }
+    }
+
     #[test]
     fn parse_succeeds() {
         expect_parse("()");
@@ -701,19 +723,18 @@ mod test {
     }
 
     #[test]
-    #[should_panic]
     fn parse_fails() {
         // Numbers can't come first in identifiers.
-        expect_parse("3thing");
-        expect_parse("(bool,3)");
+        expect_parse_fail("3thing");
+        expect_parse_fail("(bool,3)");
 
         // Arrays need a number second.
-        expect_parse("[usize; Foo]");
+        expect_parse_fail("[usize; Foo]");
 
         // Brackets must be closed
-        expect_parse("(Foo, Bar");
-        expect_parse("[Foo; 32");
-        expect_parse("Foo<A, B");
+        expect_parse_fail("(Foo, Bar");
+        expect_parse_fail("[Foo; 32");
+        expect_parse_fail("Foo<A, B");
     }
 
     #[test]

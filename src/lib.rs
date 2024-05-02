@@ -1,3 +1,18 @@
+// Copyright (C) 2024 Parity Technologies (UK) Ltd. (admin@parity.io)
+// This file is a part of the scale-encode crate.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//         http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 //! This crate provides a [`TypeRegistry`] that is capable of storing and providing back information about
 //! historic Substrate based types (ie those that are handed back in pre-V14 metadata). It's somewhat
 //! analogous to the [`scale-info`](https://github.com/paritytech/scale-info) crate, but for legacy type
