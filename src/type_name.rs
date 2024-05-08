@@ -1,5 +1,5 @@
 // Copyright (C) 2024 Parity Technologies (UK) Ltd. (admin@parity.io)
-// This file is a part of the scale-encode crate.
+// This file is a part of the scale-info-legacy crate.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ pub use parser::{ParseError, ParseErrorKind};
 /// # Example
 ///
 /// ```rust
-/// use scale_info_legacy::{ TypeName };
+/// use scale_info_legacy::TypeName;
 ///
 /// let sequence = TypeName::parse("Vec<(bool, u32)>").unwrap();
 /// let array = TypeName::parse("[u8; 32]").unwrap();
@@ -237,7 +237,7 @@ impl TypeName {
 
     // Fetch (and expect to exist) a definition at some index.
     fn def_at(&self, idx: usize) -> TypeNameDef<'_> {
-        let entry = self.registry.get(idx).expect("one item expected in Name");
+        let entry = self.registry.get(idx).expect("idx should exist in registry");
 
         match entry {
             TypeNameInner::Named { name, params } => {
@@ -470,6 +470,9 @@ mod parser {
         /// More information about the error.
         pub err: ParseErrorKind,
     }
+
+    #[cfg(feature = "std")]
+    impl std::error::Error for ParseError {}
 
     impl ParseError {
         /// Construct a new `ParseError` for tokens at the given location.

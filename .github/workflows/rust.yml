@@ -69,7 +69,7 @@ jobs:
           command: check
           # The aarch64-unknown-none doesn't support `std`, so this
           # will fail if the crate is not no_std compatible.
-          args: --target aarch64-unknown-none
+          args: --target aarch64-unknown-none --no-default-features
 
   fmt:
     name: Cargo fmt

@@ -1,5 +1,5 @@
 // Copyright (C) 2024 Parity Technologies (UK) Ltd. (admin@parity.io)
-// This file is a part of the scale-encode crate.
+// This file is a part of the scale-info-legacy crate.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -51,6 +51,9 @@ pub enum TypeRegistryResolveError {
     )]
     UnexpectedBitStoreType,
 }
+
+#[cfg(feature = "std")]
+impl std::error::Error for TypeRegistryResolveError {}
 
 /// An error when using `TypeRegistry::try_resolve_type()`. This returns the visitor if
 /// the type wasn't found, allowing us to use it again with a different registry or whatever.
@@ -134,15 +137,18 @@ impl TypeRegistry {
             ("i256", TypeShape::Primitive(Primitive::I256)),
             ("str", TypeShape::Primitive(Primitive::Str)),
             ("String", TypeShape::Primitive(Primitive::Str)),
-            ("Box<T>", TypeShape::AliasOf(TypeName::parse_unwrap("T"))),
-            ("Arc<T>", TypeShape::AliasOf(TypeName::parse_unwrap("T"))),
-            ("Rc<T>", TypeShape::AliasOf(TypeName::parse_unwrap("T"))),
-            ("Vec<T>", TypeShape::SequenceOf(TypeName::parse_unwrap("T"))),
-            ("VecDeque<T>", TypeShape::SequenceOf(TypeName::parse_unwrap("T"))),
-            ("BTreeMap<K,V>", TypeShape::SequenceOf(TypeName::parse_unwrap("(K, V)"))),
-            ("BTreeSet<V>", TypeShape::SequenceOf(TypeName::parse_unwrap("V"))),
-            ("BinaryHeap<V>", TypeShape::SequenceOf(TypeName::parse_unwrap("V"))),
-            ("Cow<T>", TypeShape::TupleOf(vec![TypeName::parse_unwrap("T")])),
+            ("Box<T>", TypeShape::AliasOf(TypeName::parse("T").unwrap())),
+            ("Arc<T>", TypeShape::AliasOf(TypeName::parse("T").unwrap())),
+            ("Rc<T>", TypeShape::AliasOf(TypeName::parse("T").unwrap())),
+            ("Cell<T>", TypeShape::AliasOf(TypeName::parse("T").unwrap())),
+            ("RefCell<T>", TypeShape::AliasOf(TypeName::parse("T").unwrap())),
+            ("Vec<T>", TypeShape::SequenceOf(TypeName::parse("T").unwrap())),
+            ("LinkedList<T>", TypeShape::SequenceOf(TypeName::parse("T").unwrap())),
+            ("VecDeque<T>", TypeShape::SequenceOf(TypeName::parse("T").unwrap())),
+            ("BTreeMap<K,V>", TypeShape::SequenceOf(TypeName::parse("(K, V)").unwrap())),
+            ("BTreeSet<V>", TypeShape::SequenceOf(TypeName::parse("V").unwrap())),
+            ("BinaryHeap<V>", TypeShape::SequenceOf(TypeName::parse("V").unwrap())),
+            ("Cow<T>", TypeShape::TupleOf(vec![TypeName::parse("T").unwrap()])),
             (
                 "Option<T>",
                 TypeShape::EnumOf(vec![
@@ -154,7 +160,9 @@ impl TypeRegistry {
                     type_shape::Variant {
                         index: 1,
                         name: "Some".to_owned(),
-                        value: type_shape::VariantDesc::TupleOf(vec![TypeName::parse_unwrap("T")]),
+                        value: type_shape::VariantDesc::TupleOf(
+                            vec![TypeName::parse("T").unwrap()],
+                        ),
                     },
                 ]),
             ),
@@ -164,12 +172,16 @@ impl TypeRegistry {
                     type_shape::Variant {
                         index: 0,
                         name: "Ok".to_owned(),
-                        value: type_shape::VariantDesc::TupleOf(vec![TypeName::parse_unwrap("T")]),
+                        value: type_shape::VariantDesc::TupleOf(
+                            vec![TypeName::parse("T").unwrap()],
+                        ),
                     },
                     type_shape::Variant {
                         index: 1,
                         name: "Err".to_owned(),
-                        value: type_shape::VariantDesc::TupleOf(vec![TypeName::parse_unwrap("E")]),
+                        value: type_shape::VariantDesc::TupleOf(
+                            vec![TypeName::parse("E").unwrap()],
+                        ),
                     },
                 ]),
             ),
@@ -181,9 +193,14 @@ impl TypeRegistry {
             (
                 "bitvec::vec::BitVec<Store, Order>",
                 TypeShape::BitSequence {
-                    store: TypeName::parse_unwrap("Store"),
-                    order: TypeName::parse_unwrap("Order"),
+                    store: TypeName::parse("Store").unwrap(),
+                    order: TypeName::parse("Order").unwrap(),
                 },
+            ),
+            // Types seem to mostly use this alias to BitVec:
+            (
+                "BitVec<Store, Order>",
+                TypeShape::AliasOf(TypeName::parse("bitvec::vec::BitVec<Store, Order>").unwrap()),
             ),
         ];
 
@@ -204,7 +221,7 @@ impl TypeRegistry {
     /// // Describe a type:
     /// let desc = TypeDescription::new(
     ///     "Foo<T>",
-    ///     TypeShape::SequenceOf(TypeName::parse_unwrap("T"))
+    ///     TypeShape::SequenceOf(TypeName::parse("T").unwrap())
     /// ).unwrap();
     ///
     /// // Add a type description to our registry:
@@ -781,25 +798,28 @@ mod test {
         types.insert(
             TypeDescription::new(
                 "BitVecLsb0Alias1",
-                TypeShape::AliasOf(TypeName::parse_unwrap("bitvec::order::Lsb0")),
+                TypeShape::AliasOf(TypeName::parse("bitvec::order::Lsb0").unwrap()),
             )
             .unwrap(),
         );
         types.insert(
             TypeDescription::new(
                 "BitVecLsb0Alias2",
-                TypeShape::AliasOf(TypeName::parse_unwrap("BitVecLsb0Alias1")),
+                TypeShape::AliasOf(TypeName::parse("BitVecLsb0Alias1").unwrap()),
             )
             .unwrap(),
         );
         types.insert(
-            TypeDescription::new("AliasForU16", TypeShape::AliasOf(TypeName::parse_unwrap("u16")))
-                .unwrap(),
+            TypeDescription::new(
+                "AliasForU16",
+                TypeShape::AliasOf(TypeName::parse("u16").unwrap()),
+            )
+            .unwrap(),
         );
         types.insert(
             TypeDescription::new(
                 "AliasForBitVec<S,O>",
-                TypeShape::AliasOf(TypeName::parse_unwrap("bitvec::vec::BitVec<S,O>")),
+                TypeShape::AliasOf(TypeName::parse("bitvec::vec::BitVec<S,O>").unwrap()),
             )
             .unwrap(),
         );
@@ -833,12 +853,12 @@ mod test {
 
         // A couple of composite scoped types:
         types.insert(
-            TypeDescription::new("Foo<T>", TypeShape::SequenceOf(TypeName::parse_unwrap("T")))
+            TypeDescription::new("Foo<T>", TypeShape::SequenceOf(TypeName::parse("T").unwrap()))
                 .unwrap()
                 .in_pallet(PALLET),
         );
         types.insert(
-            TypeDescription::new("Bar<T>", TypeShape::SequenceOf(TypeName::parse_unwrap("T")))
+            TypeDescription::new("Bar<T>", TypeShape::SequenceOf(TypeName::parse("T").unwrap()))
                 .unwrap()
                 .in_pallet(PALLET),
         );

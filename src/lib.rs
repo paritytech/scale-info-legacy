@@ -1,5 +1,5 @@
 // Copyright (C) 2024 Parity Technologies (UK) Ltd. (admin@parity.io)
-// This file is a part of the scale-encode crate.
+// This file is a part of the scale-info-legacy crate.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@
 //! - [`scale-value`](https://github.com/paritytech/scale-value) to SCALE encode or decode from a
 //!   `Value` type (a bit like `serde_json`'s `Value` type).
 
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 #![deny(missing_docs)]
 
 extern crate alloc;

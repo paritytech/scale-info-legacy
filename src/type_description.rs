@@ -1,5 +1,5 @@
 // Copyright (C) 2024 Parity Technologies (UK) Ltd. (admin@parity.io)
-// This file is a part of the scale-encode crate.
+// This file is a part of the scale-info-legacy crate.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ use smallvec::SmallVec;
 /// // use the generic parameters where necessary in the description.
 /// let vec_description = TypeDescription::new(
 ///     "Vec<T>",
-///     TypeShape::SequenceOf(TypeName::parse_unwrap("T"))
+///     TypeShape::SequenceOf(TypeName::parse("T").unwrap())
 /// ).unwrap();
 /// ```
 pub struct TypeDescription {
@@ -122,3 +122,6 @@ pub enum ParseError {
     #[display(fmt = "Expected the generic params to be capitalized.")]
     ExpectingUppercaseParams,
 }
+
+#[cfg(feature = "std")]
+impl std::error::Error for ParseError {}
