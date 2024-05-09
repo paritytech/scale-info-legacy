@@ -36,6 +36,7 @@ extern crate alloc;
 
 pub mod type_name;
 pub mod type_registry;
+pub mod type_registry_set;
 pub mod type_shape;
 
 // Export the main types here for ease of use:
