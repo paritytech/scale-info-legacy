@@ -72,13 +72,21 @@ impl core::str::FromStr for TypeName {
     }
 }
 
-impl TypeName {
-    /// Parse an input string into a [`TypeName`]. Panics if the input
-    /// can not be parsed into a valid [`TypeName`].
-    pub fn parse_unwrap(input: &str) -> TypeName {
-        Self::parse(input).unwrap()
+impl core::convert::TryFrom<&str> for TypeName {
+    type Error = ParseError;
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        Self::parse(s)
     }
+}
 
+impl core::convert::TryFrom<String> for TypeName {
+    type Error = ParseError;
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        Self::parse(&s)
+    }
+}
+
+impl TypeName {
     /// Parse an input string into a [`TypeName`].
     pub fn parse(input: &str) -> Result<TypeName, ParseError> {
         use yap::IntoTokens;
@@ -96,9 +104,11 @@ impl TypeName {
         })
     }
 
-    /// Perform a lookup of this type name in the context of some pallet. This means that
-    /// types which are defined to exist only within the given pallet will be considered
-    /// before any global types.
+    /// If this [`TypeName`] is used to insert a type via eg [`crate::TypeRegistry::insert()`], then
+    /// this will scope the inserted type to only being available within the given pallet.
+    ///
+    /// If this [`TypeName`] is used to lookup a type via eg [`crate::TypeRegistry::resolve_type()`],
+    /// then this will allow the lookup to make use of types that are scoped to the given pallet.
     pub fn in_pallet(mut self, pallet_name: impl Into<String>) -> TypeName {
         self.pallet = Some(pallet_name.into());
         self
@@ -107,6 +117,11 @@ impl TypeName {
     /// The pallet that we should perform this type lookup in.
     pub(crate) fn pallet(&self) -> Option<&str> {
         self.pallet.as_deref()
+    }
+
+    /// Remove the pallet value from the type name, leaving `None` in its place.
+    pub(crate) fn take_pallet(&mut self) -> Option<String> {
+        self.pallet.take()
     }
 
     /// Substitute a named type with another. This is useful if we have a type name
@@ -759,8 +774,8 @@ mod test {
         ];
 
         for (original, find, replace_with, expected) in cases {
-            let original_ty = TypeName::parse_unwrap(original);
-            let replacement = TypeName::parse_unwrap(replace_with);
+            let original_ty = TypeName::parse(original).unwrap();
+            let replacement = TypeName::parse(replace_with).unwrap();
             let new_ty = original_ty.with_substitution(find, replacement.def());
             assert_eq!(expected, new_ty.to_string());
         }
@@ -851,7 +866,7 @@ mod test {
         ];
 
         for ty_name_str in ty_name_strs {
-            let ty_name = TypeName::parse_unwrap(ty_name_str);
+            let ty_name = TypeName::parse(ty_name_str).unwrap();
             assert_eq!(ty_name.to_string(), ty_name_str);
         }
     }

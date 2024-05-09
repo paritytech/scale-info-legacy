@@ -16,7 +16,6 @@
 //! This module provides a [`TypeRegistry`], which can be used to store and resolve
 //! type information for types based on their names.
 
-use crate::type_description::TypeDescription;
 use crate::type_name::{self, TypeName, TypeNameDef};
 use crate::type_shape::{self, Primitive, TypeShape, VariantDesc};
 use alloc::borrow::ToOwned;
@@ -30,7 +29,7 @@ use scale_type_resolver::{
 };
 use smallvec::SmallVec;
 
-/// An error resolving types.
+/// An error resolving types in the [`TypeRegistry`].
 #[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub enum TypeRegistryResolveError {
@@ -54,6 +53,29 @@ pub enum TypeRegistryResolveError {
 
 #[cfg(feature = "std")]
 impl std::error::Error for TypeRegistryResolveError {}
+
+/// An error inserting a type into the [`TypeRegistry`].
+#[allow(missing_docs)]
+#[derive(Debug, derive_more::Display)]
+pub enum TypeRegistryInsertError {
+    #[display(
+        fmt = "Failed to parse the type name. Expected something like 'Foo' or 'Bar<A, B>'."
+    )]
+    InvalidTyName,
+    #[display(
+        fmt = "Expected something like 'Foo' or 'Bar<A, B>' but got an array or tuple type."
+    )]
+    ExpectingNamedType,
+    #[display(
+        fmt = "Expected the generic params to be names like 'A' or 'B', not arrays or tuples."
+    )]
+    ExpectingNamedParam,
+    #[display(fmt = "Expected the generic params to be capitalized.")]
+    ExpectingUppercaseParams,
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for TypeRegistryInsertError {}
 
 /// An error when using `TypeRegistry::try_resolve_type()`. This returns the visitor if
 /// the type wasn't found, allowing us to use it again with a different registry or whatever.
@@ -205,7 +227,7 @@ impl TypeRegistry {
         ];
 
         for (name, desc) in basic_types {
-            registry.insert(TypeDescription::new(name, desc).expect("basic type should be valid"));
+            registry.insert(name, desc).expect("TypeRegistry::basic() should insert valid types");
         }
 
         registry
@@ -216,21 +238,52 @@ impl TypeRegistry {
     /// # Example
     ///
     /// ```rust
-    /// use scale_info_legacy::{ TypeRegistry, TypeDescription, TypeShape, TypeName };
+    /// use scale_info_legacy::{ TypeRegistry, TypeShape, TypeName };
     ///
-    /// // Describe a type:
-    /// let desc = TypeDescription::new(
-    ///     "Foo<T>",
-    ///     TypeShape::SequenceOf(TypeName::parse("T").unwrap())
-    /// ).unwrap();
-    ///
-    /// // Add a type description to our registry:
     /// let mut registry = TypeRegistry::empty();
-    /// registry.insert(desc);
+    ///
+    /// // Add a basic type description to our registry:
+    /// registry.insert("Foo<T>", TypeShape::SequenceOf(TypeName::parse("T").unwrap()));
+    ///
+    /// // We can add types that are scoped to a specific pallet, too:
+    /// let scoped_type = TypeName::parse("Bar<A,B,C>").unwrap().in_pallet("balances");
+    /// registry.insert(scoped_type, TypeShape::SequenceOf(TypeName::parse("T").unwrap()));
     /// ```
-    pub fn insert(&mut self, ty: TypeDescription) {
-        let (pallet, name, params, desc) = ty.into_parts();
-        self.types.insert(TypeKey { pallet, name }, TypeInfo { desc, params });
+    pub fn insert(
+        &mut self,
+        name_with_params: impl TryInto<TypeName>,
+        shape: TypeShape,
+    ) -> Result<(), TypeRegistryInsertError> {
+        // The provided name can just be a &str, or it can be a TypeName if we want
+        // to also configure a pallet value to scope it.
+        let mut ty_name: TypeName =
+            name_with_params.try_into().map_err(|_| TypeRegistryInsertError::InvalidTyName)?;
+
+        let pallet = ty_name.take_pallet();
+
+        // We only accept named types like Foo<A, B> or path::to::Bar.
+        let TypeNameDef::Named(named_ty) = ty_name.def() else {
+            return Err(TypeRegistryInsertError::ExpectingNamedType);
+        };
+
+        let name = named_ty.name().to_owned();
+        let params = named_ty
+            .param_defs()
+            .map(|param| {
+                // Params must be simple names and not array/tuples.
+                let TypeNameDef::Named(name) = param else {
+                    return Err(TypeRegistryInsertError::ExpectingNamedParam);
+                };
+                // Param names must be capitalized because they represent generics.
+                if name.name().starts_with(|c: char| c.is_lowercase()) {
+                    return Err(TypeRegistryInsertError::ExpectingUppercaseParams);
+                }
+                Ok(name.name().to_owned())
+            })
+            .collect::<Result<_, _>>()?;
+
+        self.types.insert(TypeKey { pallet, name }, TypeInfo { desc: shape, params });
+        Ok(())
     }
 
     /// Resolve some type information by providing a [`TypeName`], which is the
@@ -240,7 +293,7 @@ impl TypeRegistry {
     /// # Example
     ///
     /// ```rust
-    /// use scale_info_legacy::{ TypeRegistry, TypeDescription, TypeShape, TypeName };
+    /// use scale_info_legacy::{ TypeRegistry, TypeShape, TypeName };
     /// use scale_type_resolver::visitor;
     ///
     /// // Name a type that you want to know how to encode/decode:
@@ -449,7 +502,7 @@ impl TypeRegistry {
     /// # Example
     ///
     /// ```rust
-    /// use scale_info_legacy::{ TypeRegistry, TypeDescription, TypeShape };
+    /// use scale_info_legacy::{ TypeRegistry, TypeShape };
     /// use scale_type_resolver::visitor;
     ///
     /// // Provide a dumb visitor (ie set of callbacks) to tell us about the type that
@@ -795,34 +848,25 @@ mod test {
         // - Multiple indirection of aliases,
         // - Aliases with generics,
         // - That bitvec resolving works through aliases.
-        types.insert(
-            TypeDescription::new(
+        types
+            .insert(
                 "BitVecLsb0Alias1",
                 TypeShape::AliasOf(TypeName::parse("bitvec::order::Lsb0").unwrap()),
             )
-            .unwrap(),
-        );
-        types.insert(
-            TypeDescription::new(
+            .unwrap();
+        types
+            .insert(
                 "BitVecLsb0Alias2",
                 TypeShape::AliasOf(TypeName::parse("BitVecLsb0Alias1").unwrap()),
             )
-            .unwrap(),
-        );
-        types.insert(
-            TypeDescription::new(
-                "AliasForU16",
-                TypeShape::AliasOf(TypeName::parse("u16").unwrap()),
-            )
-            .unwrap(),
-        );
-        types.insert(
-            TypeDescription::new(
+            .unwrap();
+        types.insert("AliasForU16", TypeShape::AliasOf(TypeName::parse("u16").unwrap())).unwrap();
+        types
+            .insert(
                 "AliasForBitVec<S,O>",
                 TypeShape::AliasOf(TypeName::parse("bitvec::vec::BitVec<S,O>").unwrap()),
             )
-            .unwrap(),
-        );
+            .unwrap();
 
         let resolved =
             to_resolved_info_str("AliasForBitVec<AliasForU16, BitVecLsb0Alias2>", &types);
@@ -839,29 +883,30 @@ mod test {
         let mut types = TypeRegistry::empty();
 
         // Global types
-        types.insert(TypeDescription::new("u16", TypeShape::Primitive(Primitive::U16)).unwrap());
-        types.insert(
-            TypeDescription::new("Primitive", TypeShape::Primitive(Primitive::U16)).unwrap(),
-        );
+        types.insert("u16", TypeShape::Primitive(Primitive::U16)).unwrap();
+        types.insert("Primitive", TypeShape::Primitive(Primitive::U16)).unwrap();
 
         // Type in balances pallet to override it. (u128, not u16 here)
-        types.insert(
-            TypeDescription::new("Primitive", TypeShape::Primitive(Primitive::U128))
-                .unwrap()
-                .in_pallet(PALLET),
-        );
+        types
+            .insert(
+                TypeName::parse("Primitive").unwrap().in_pallet(PALLET),
+                TypeShape::Primitive(Primitive::U128),
+            )
+            .unwrap();
 
         // A couple of composite scoped types:
-        types.insert(
-            TypeDescription::new("Foo<T>", TypeShape::SequenceOf(TypeName::parse("T").unwrap()))
-                .unwrap()
-                .in_pallet(PALLET),
-        );
-        types.insert(
-            TypeDescription::new("Bar<T>", TypeShape::SequenceOf(TypeName::parse("T").unwrap()))
-                .unwrap()
-                .in_pallet(PALLET),
-        );
+        types
+            .insert(
+                TypeName::parse("Foo<T>").unwrap().in_pallet(PALLET),
+                TypeShape::SequenceOf(TypeName::parse("T").unwrap()),
+            )
+            .unwrap();
+        types
+            .insert(
+                TypeName::parse("Bar<T>").unwrap().in_pallet(PALLET),
+                TypeShape::SequenceOf(TypeName::parse("T").unwrap()),
+            )
+            .unwrap();
 
         // Now, try resolving some types in the context of the "balances" pallet to check that we use scoped types appropriately.
         let scoped_tests = [
@@ -885,7 +930,7 @@ mod test {
         ];
 
         for (input, expected) in scoped_tests {
-            let scoped_name = TypeName::parse_unwrap(input).in_pallet("balances");
+            let scoped_name = TypeName::parse(input).unwrap().in_pallet("balances");
             let actual = to_resolved_info(scoped_name, &types);
             assert_eq!(expected, actual, "error with type name {input}");
         }

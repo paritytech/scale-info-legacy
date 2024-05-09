@@ -34,13 +34,9 @@
 
 extern crate alloc;
 
-pub mod type_description;
 pub mod type_name;
 pub mod type_registry;
 pub mod type_shape;
 
 // Export the main types here for ease of use:
-pub use {
-    type_description::TypeDescription, type_name::TypeName, type_registry::TypeRegistry,
-    type_shape::TypeShape,
-};
+pub use {type_name::TypeName, type_registry::TypeRegistry, type_shape::TypeShape};
