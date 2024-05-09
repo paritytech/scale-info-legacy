@@ -77,6 +77,17 @@ pub enum TypeRegistryInsertError {
 #[cfg(feature = "std")]
 impl std::error::Error for TypeRegistryInsertError {}
 
+/// An error when using [`TypeRegistry::try_resolve_type()`]. This returns the visitor if
+/// the type wasn't found, allowing us to use it again with a different registry or whatever.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, derive_more::Display)]
+pub(crate) enum TypeRegistryResolveWithParentError<Visitor> {
+    #[display(fmt = "Type '{type_name}' not found")]
+    TypeNotFound { type_name: TypeName, visitor: Visitor },
+    #[display(fmt = "{_0}")]
+    Other(TypeRegistryResolveError),
+}
+
 /// The type info stored in the registry against a given named type.
 #[derive(Debug)]
 struct TypeInfo {
@@ -104,21 +115,6 @@ fn hash_key<H: core::hash::Hasher>(pallet: Option<&str>, name: &str, state: &mut
     name.hash(state);
 }
 
-#[derive(Clone,Copy)]
-pub struct TypeRegistryNotFoundFallback;
-impl TypeResolver for TypeRegistryNotFoundFallback {
-    type TypeId = TypeName;
-    type Error = TypeRegistryResolveError;
-
-    fn resolve_type<'this, V: ResolvedTypeVisitor<'this, TypeId = Self::TypeId>>(
-        &'this self,
-        _type_id: Self::TypeId,
-        visitor: V,
-    ) -> Result<V::Value, Self::Error> {
-        Ok(visitor.visit_not_found())
-    }
-}
-
 /// A type registry that stores a mapping from type names to a description of how to SCALE
 /// encode/decode that type.
 ///
@@ -132,11 +128,6 @@ pub struct TypeRegistry {
     /// of the shape of the type (which may involve generic params or just be
     /// concrete types or aliases to other types).
     types: HashMap<TypeKey, TypeInfo>,
-    /// The [`TypeRegistry::resolve_type_with_fallback()`] method is internally used
-    /// to allow us to provide a fallback resolver to resolve types if this registry
-    /// cannot find them. The fallback resolver must live as long as Self, so we include
-    /// a default one here which just calls `visitor.visit_not_found()`.
-    fallback: TypeRegistryNotFoundFallback,
 }
 
 impl TypeRegistry {
@@ -144,7 +135,7 @@ impl TypeRegistry {
     /// start with [`TypeRegistry::basic()`] to get a registry pre-populated with built in
     /// rust types.
     pub fn empty() -> Self {
-        TypeRegistry { types: HashMap::new(), fallback: TypeRegistryNotFoundFallback }
+        TypeRegistry { types: HashMap::new() }
     }
 
     /// Create a new [`TypeRegistry`] that's pre-populated with built-in rust types.
@@ -324,19 +315,27 @@ impl TypeRegistry {
         type_id: TypeName,
         visitor: V,
     ) -> Result<V::Value, TypeRegistryResolveError> {
-        self.resolve_type_with_fallback(&self.fallback, type_id, visitor)
+        match self.resolve_type_with_parent(self, type_id, visitor) {
+            Err(TypeRegistryResolveWithParentError::Other(e)) => Err(e),
+            Err(TypeRegistryResolveWithParentError::TypeNotFound { visitor, .. }) => Ok(visitor.visit_not_found()),
+            Ok(val) => Ok(val)
+        }
     }
 
-    /// Like [`TypeRegistry::resolve_type()`], but if we cannot find the type, we'll fall back
-    /// to calling the provided fallback type resolver instead.
-    pub(crate) fn resolve_type_with_fallback<'this, Fallback, V>(
+    /// Like [`TypeRegistry::resolve_type()`], but:
+    ///
+    /// - If the type wasn't found, we return an error with the original [`TypeName`] and visitor in,
+    ///   allowing them to be reused elsewhere.
+    /// - If we need to internally resolve an inner type, for example some alias type name, or bitvec
+    ///   store/order types, then we'll call the provided parent resolver to handle this.
+    pub(crate) fn resolve_type_with_parent<'this, Parent, V>(
         &'this self,
-        fallback: &'this Fallback,
+        parent: &'this Parent,
         type_id: TypeName,
         visitor: V,
-    ) -> Result<V::Value, TypeRegistryResolveError>
+    ) -> Result<V::Value, TypeRegistryResolveWithParentError<V>>
     where
-        Fallback: TypeResolver<Error = TypeRegistryResolveError, TypeId = TypeName>,
+        Parent: TypeResolver<Error = TypeRegistryResolveError, TypeId = TypeName>,
         V: ResolvedTypeVisitor<'this, TypeId = TypeName>,
     {
         // The pallet that our lookups will be performed within:
@@ -355,7 +354,10 @@ impl TypeRegistry {
                         }
                     })
                 else {
-                    return fallback.resolve_type(type_id, visitor)
+                    return Err(TypeRegistryResolveWithParentError::TypeNotFound {
+                        type_name: type_id,
+                        visitor
+                    })
                 };
 
                 let num_input_params = ty.param_defs().count();
@@ -364,11 +366,15 @@ impl TypeRegistry {
                 // Complain if you try asking for a type and don't provide the expected number
                 // of parameters in place of that types generics.
                 if num_input_params != num_expected_params {
-                    return Err(TypeRegistryResolveError::TypeParamsMismatch {
-                        type_name: ty.name().to_owned(),
-                        expected_params: num_expected_params,
-                        provided_params: num_input_params,
-                    });
+                    return Err(
+                        TypeRegistryResolveWithParentError::Other(
+                            TypeRegistryResolveError::TypeParamsMismatch {
+                                type_name: ty.name().to_owned(),
+                                expected_params: num_expected_params,
+                                provided_params: num_input_params,
+                            }
+                        )
+                    );
                 }
 
                 // Build a mapping from generic ident to the concrete type def we've been given.
@@ -440,16 +446,16 @@ impl TypeRegistry {
                         // in something like a `.map_err()` closure.
                         macro_rules! resolve_format {
                             ($ty:ident, $visitor:ident, $err_variant:ident) => {{
-                                match self.resolve_type_with_fallback(fallback, $ty, $visitor) {
+                                match parent.resolve_type($ty, $visitor) {
                                     // Found a type of the right shape:
                                     Ok(Some(v)) => v,
                                     // Didn't find a type of the right shape:
                                     Ok(None) => {
-                                        return Err(TypeRegistryResolveError::$err_variant)
+                                        return Err(TypeRegistryResolveWithParentError::Other(TypeRegistryResolveError::$err_variant))
                                     }
                                     // Some other error:
                                     Err(e) => {
-                                        return Err(e)
+                                        return Err(TypeRegistryResolveWithParentError::Other(e))
                                     }
                                 }
                             }};
@@ -469,7 +475,7 @@ impl TypeRegistry {
                     TypeShape::Primitive(p) => Ok(visitor.visit_primitive(*p)),
                     TypeShape::AliasOf(ty) => {
                         let type_id = apply_param_mapping(pallet, ty.clone(), &param_mapping);
-                        self.resolve_type_with_fallback(fallback, type_id, visitor)
+                        parent.resolve_type(type_id, visitor).map_err(TypeRegistryResolveWithParentError::Other)
                     }
                 }
             }
@@ -656,90 +662,9 @@ impl<Item, A: ExactSizeIterator<Item = Item>, B: ExactSizeIterator<Item = Item>>
 mod test {
     use super::*;
     use alloc::boxed::Box;
-    use alloc::vec::Vec;
+    use crate::test_utils::{to_resolved_info,to_resolved_info_str};
 
-    fn to_resolved_info(type_id: TypeName, types: &TypeRegistry) -> ResolvedTypeInfo {
-        use scale_type_resolver::visitor;
-
-        // Build a quick visitor which turns resolved type info
-        // into a concrete type for us to check.
-        let visitor = visitor::new((), |_, _| panic!("all methods implemented"))
-            .visit_not_found(|_| ResolvedTypeInfo::NotFound)
-            .visit_composite(|_, _, fields| {
-                let fs = fields
-                    .map(|f| {
-                        let inner_ty = to_resolved_info(f.id, types);
-                        (f.name.map(|n| n.to_owned()), inner_ty)
-                    })
-                    .collect();
-                ResolvedTypeInfo::CompositeOf(fs)
-            })
-            .visit_variant(|_, _, variants| {
-                let vs = variants
-                    .map(|v| {
-                        let fs: Vec<_> = v
-                            .fields
-                            .map(|f| {
-                                let inner_ty = to_resolved_info(f.id, types);
-                                (f.name.map(|n| n.to_owned()), inner_ty)
-                            })
-                            .collect();
-                        (v.name.to_owned(), fs)
-                    })
-                    .collect();
-                ResolvedTypeInfo::VariantOf(vs)
-            })
-            .visit_sequence(|_, _, type_id| {
-                ResolvedTypeInfo::SequenceOf(Box::new(to_resolved_info(type_id, types)))
-            })
-            .visit_array(|_, type_id, len| {
-                ResolvedTypeInfo::ArrayOf(Box::new(to_resolved_info(type_id, types)), len)
-            })
-            .visit_tuple(|_, type_ids| {
-                let ids = type_ids.map(|id| to_resolved_info(id, types)).collect();
-                ResolvedTypeInfo::TupleOf(ids)
-            })
-            .visit_primitive(|_, primitive| ResolvedTypeInfo::Primitive(primitive))
-            .visit_compact(|_, type_id| {
-                ResolvedTypeInfo::Compact(Box::new(to_resolved_info(type_id, types)))
-            })
-            .visit_bit_sequence(|_, store_format, order_format| {
-                ResolvedTypeInfo::BitSequence(store_format, order_format)
-            });
-
-        match types.resolve_type(type_id, visitor) {
-            Err(e) => ResolvedTypeInfo::Err(e),
-            Ok(info) => info,
-        }
-    }
-
-    fn to_resolved_info_str(type_id_str: &str, types: &TypeRegistry) -> ResolvedTypeInfo {
-        let type_id = match TypeName::parse(type_id_str) {
-            Ok(id) => id,
-            Err(e) => {
-                return ResolvedTypeInfo::Err(TypeRegistryResolveError::TypeNameInvalid(
-                    type_id_str.to_owned(),
-                    e,
-                ));
-            }
-        };
-        to_resolved_info(type_id, types)
-    }
-
-    #[allow(clippy::type_complexity)]
-    #[derive(Clone, Debug, PartialEq, Eq)]
-    enum ResolvedTypeInfo {
-        Err(TypeRegistryResolveError),
-        NotFound,
-        CompositeOf(Vec<(Option<String>, ResolvedTypeInfo)>),
-        VariantOf(Vec<(String, Vec<(Option<String>, ResolvedTypeInfo)>)>),
-        SequenceOf(Box<ResolvedTypeInfo>),
-        ArrayOf(Box<ResolvedTypeInfo>, usize),
-        TupleOf(Vec<ResolvedTypeInfo>),
-        Primitive(Primitive),
-        Compact(Box<ResolvedTypeInfo>),
-        BitSequence(BitsStoreFormat, BitsOrderFormat),
-    }
+    type ResolvedTypeInfo = crate::test_utils::ResolvedTypeInfo<TypeRegistryResolveError>;
 
     #[test]
     fn resolve_basic_types() {
