@@ -18,8 +18,8 @@
 //! until a match is found. This allows us to compose different sets of types into a single thing
 //! which itself also implements [`scale_type_resolver::TypeResolver`].
 
-use crate::{TypeRegistry,TypeName};
 use crate::type_registry::{TypeRegistryResolveError, TypeRegistryResolveWithParentError};
+use crate::{TypeName, TypeRegistry};
 use scale_type_resolver::TypeResolver;
 
 /// This can be constructed from an iterator of [`crate::TypeRegistry`]s. When resolving types
@@ -28,7 +28,7 @@ use scale_type_resolver::TypeResolver;
 /// through them until it can find the type, failing with an error if none of the registries
 /// contain an answer.
 pub struct TypeRegistrySet {
-    registries: Vec<TypeRegistry>
+    registries: Vec<TypeRegistry>,
 }
 
 impl core::iter::FromIterator<TypeRegistry> for TypeRegistrySet {
@@ -41,7 +41,10 @@ impl TypeResolver for TypeRegistrySet {
     type TypeId = TypeName;
     type Error = TypeRegistryResolveError;
 
-    fn resolve_type<'this, V: scale_type_resolver::ResolvedTypeVisitor<'this, TypeId = Self::TypeId>>(
+    fn resolve_type<
+        'this,
+        V: scale_type_resolver::ResolvedTypeVisitor<'this, TypeId = Self::TypeId>,
+    >(
         &'this self,
         mut type_id: Self::TypeId,
         mut visitor: V,
@@ -53,7 +56,10 @@ impl TypeResolver for TypeRegistrySet {
                 // Hit some other error; return it.
                 Err(TypeRegistryResolveWithParentError::Other(e)) => return Err(e),
                 // The type wasn't found; we'll continue to the next registry in the vec.
-                Err(TypeRegistryResolveWithParentError::TypeNotFound { type_name: tn, visitor: v }) => {
+                Err(TypeRegistryResolveWithParentError::TypeNotFound {
+                    type_name: tn,
+                    visitor: v,
+                }) => {
                     type_id = tn;
                     visitor = v;
                 }
@@ -67,22 +73,74 @@ impl TypeResolver for TypeRegistrySet {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::TypeShape;
+    use crate::test_utils::{to_resolved_info, ResolvedTypeInfo};
     use crate::type_shape::Primitive;
-    use crate::test_utils::{ResolvedTypeInfo,to_resolved_info_str};
+    use crate::TypeShape;
+    use scale_type_resolver::{BitsOrderFormat, BitsStoreFormat};
 
-    #[test]
-    fn resolve_bitvec_across_registries() {
-
+    fn tn(name: &str) -> TypeName {
+        TypeName::parse(name).unwrap()
     }
 
     #[test]
-    fn resolve_alias_across_registries() {
+    fn picks_last_registry_first() {
         let mut a = TypeRegistry::empty();
-        a.insert("A", TypeShape::AliasOf(TypeName::parse("B").unwrap())).unwrap();
+        a.insert("u8", TypeShape::Primitive(Primitive::U8)).unwrap();
+        a.insert("Val", TypeShape::Primitive(Primitive::I8)).unwrap();
 
         let mut b = TypeRegistry::empty();
-        b.insert("B", TypeShape::AliasOf(TypeName::parse("C").unwrap())).unwrap();
+        b.insert("Val", TypeShape::Primitive(Primitive::I16)).unwrap();
+
+        let mut c = TypeRegistry::empty();
+        c.insert(tn("Val").in_pallet("balances"), TypeShape::Primitive(Primitive::I32)).unwrap();
+
+        // Resolving will look in c, then b, then a.
+        let types = TypeRegistrySet::from_iter([a, b, c]);
+
+        // Sanity check; find val decalred inthe "bottom" registry only.
+        assert_eq!(to_resolved_info("u8", &types), ResolvedTypeInfo::Primitive(Primitive::U8));
+        // Ignores the pallet val since we aren't in said pallet.
+        assert_eq!(to_resolved_info("Val", &types), ResolvedTypeInfo::Primitive(Primitive::I16));
+        // Use the pallet specific val if the ID we pass is in that pallet.
+        assert_eq!(
+            to_resolved_info(tn("Val").in_pallet("balances"), &types),
+            ResolvedTypeInfo::Primitive(Primitive::I32)
+        );
+    }
+
+    #[test]
+    fn resolve_bitvec_backwards_across_registries() {
+        let mut a = TypeRegistry::empty();
+        a.insert(
+            "BitVec",
+            TypeShape::BitSequence { order: tn("bitvec::order::Lsb0"), store: tn("Store") },
+        )
+        .unwrap();
+
+        let mut b = TypeRegistry::empty();
+        b.insert("bitvec::order::Lsb0", TypeShape::StructOf(vec![])).unwrap();
+
+        let mut c = TypeRegistry::empty();
+        c.insert("Store", TypeShape::Primitive(Primitive::U8)).unwrap();
+
+        // Resolving will look in c, then b, then a.
+        let types = TypeRegistrySet::from_iter([a, b, c]);
+
+        // Order and store types are both in different registries. Not only different,
+        // but ones we've already looked in before we get to the BitVec.
+        assert_eq!(
+            to_resolved_info("BitVec", &types),
+            ResolvedTypeInfo::BitSequence(BitsStoreFormat::U8, BitsOrderFormat::Lsb0)
+        );
+    }
+
+    #[test]
+    fn resolve_alias_backwards_across_registries() {
+        let mut a = TypeRegistry::empty();
+        a.insert("A", TypeShape::AliasOf(tn("B"))).unwrap();
+
+        let mut b = TypeRegistry::empty();
+        b.insert("B", TypeShape::AliasOf(tn("C"))).unwrap();
 
         let mut c = TypeRegistry::empty();
         c.insert("C", TypeShape::Primitive(Primitive::Bool)).unwrap();
@@ -92,9 +150,6 @@ mod test {
 
         // We try to resolve the alias A, which is in the last registry to be queried.
         // This will need to backtrack to previous registries in the list to resolve.
-        assert_eq!(
-            to_resolved_info_str("A", &types),
-            ResolvedTypeInfo::Primitive(Primitive::Bool)
-        );
+        assert_eq!(to_resolved_info("A", &types), ResolvedTypeInfo::Primitive(Primitive::Bool));
     }
 }

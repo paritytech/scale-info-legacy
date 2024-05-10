@@ -249,9 +249,9 @@ impl TypeRegistry {
     /// let scoped_type = TypeName::parse("Bar<A,B,C>").unwrap().in_pallet("balances");
     /// registry.insert(scoped_type, TypeShape::SequenceOf(TypeName::parse("T").unwrap()));
     /// ```
-    pub fn insert(
+    pub fn insert<Name: TryInto<TypeName>>(
         &mut self,
-        name_with_params: impl TryInto<TypeName>,
+        name_with_params: Name,
         shape: TypeShape,
     ) -> Result<(), TypeRegistryInsertError> {
         // The provided name can just be a &str, or it can be a TypeName if we want
@@ -317,8 +317,10 @@ impl TypeRegistry {
     ) -> Result<V::Value, TypeRegistryResolveError> {
         match self.resolve_type_with_parent(self, type_id, visitor) {
             Err(TypeRegistryResolveWithParentError::Other(e)) => Err(e),
-            Err(TypeRegistryResolveWithParentError::TypeNotFound { visitor, .. }) => Ok(visitor.visit_not_found()),
-            Ok(val) => Ok(val)
+            Err(TypeRegistryResolveWithParentError::TypeNotFound { visitor, .. }) => {
+                Ok(visitor.visit_not_found())
+            }
+            Ok(val) => Ok(val),
         }
     }
 
@@ -356,8 +358,8 @@ impl TypeRegistry {
                 else {
                     return Err(TypeRegistryResolveWithParentError::TypeNotFound {
                         type_name: type_id,
-                        visitor
-                    })
+                        visitor,
+                    });
                 };
 
                 let num_input_params = ty.param_defs().count();
@@ -366,15 +368,13 @@ impl TypeRegistry {
                 // Complain if you try asking for a type and don't provide the expected number
                 // of parameters in place of that types generics.
                 if num_input_params != num_expected_params {
-                    return Err(
-                        TypeRegistryResolveWithParentError::Other(
-                            TypeRegistryResolveError::TypeParamsMismatch {
-                                type_name: ty.name().to_owned(),
-                                expected_params: num_expected_params,
-                                provided_params: num_input_params,
-                            }
-                        )
-                    );
+                    return Err(TypeRegistryResolveWithParentError::Other(
+                        TypeRegistryResolveError::TypeParamsMismatch {
+                            type_name: ty.name().to_owned(),
+                            expected_params: num_expected_params,
+                            provided_params: num_input_params,
+                        },
+                    ));
                 }
 
                 // Build a mapping from generic ident to the concrete type def we've been given.
@@ -451,7 +451,9 @@ impl TypeRegistry {
                                     Ok(Some(v)) => v,
                                     // Didn't find a type of the right shape:
                                     Ok(None) => {
-                                        return Err(TypeRegistryResolveWithParentError::Other(TypeRegistryResolveError::$err_variant))
+                                        return Err(TypeRegistryResolveWithParentError::Other(
+                                            TypeRegistryResolveError::$err_variant,
+                                        ))
                                     }
                                     // Some other error:
                                     Err(e) => {
@@ -475,7 +477,9 @@ impl TypeRegistry {
                     TypeShape::Primitive(p) => Ok(visitor.visit_primitive(*p)),
                     TypeShape::AliasOf(ty) => {
                         let type_id = apply_param_mapping(pallet, ty.clone(), &param_mapping);
-                        parent.resolve_type(type_id, visitor).map_err(TypeRegistryResolveWithParentError::Other)
+                        parent
+                            .resolve_type(type_id, visitor)
+                            .map_err(TypeRegistryResolveWithParentError::Other)
                     }
                 }
             }
@@ -560,9 +564,9 @@ fn lookup<'map>(
     map.raw_entry().from_hash(hash, |k| k.name == name && k.pallet.as_deref() == pallet)
 }
 
-#[derive(Copy,Clone)]
+#[derive(Copy, Clone)]
 struct OrderVisitor;
-impl <'resolver> scale_type_resolver::ResolvedTypeVisitor<'resolver> for OrderVisitor {
+impl<'resolver> scale_type_resolver::ResolvedTypeVisitor<'resolver> for OrderVisitor {
     type TypeId = TypeName;
     type Value = Option<BitsOrderFormat>;
 
@@ -570,9 +574,10 @@ impl <'resolver> scale_type_resolver::ResolvedTypeVisitor<'resolver> for OrderVi
         None
     }
     fn visit_composite<Path, Fields>(self, mut path: Path, _fields: Fields) -> Self::Value
-        where
-            Path: scale_type_resolver::PathIter<'resolver>,
-            Fields: scale_type_resolver::FieldIter<'resolver, Self::TypeId>, {
+    where
+        Path: scale_type_resolver::PathIter<'resolver>,
+        Fields: scale_type_resolver::FieldIter<'resolver, Self::TypeId>,
+    {
         // use the path to determine whether this is the Lsb0 or Msb0
         // ordering type we're looking for, returning None if not.
         if path.next()? != "bitvec" {
@@ -593,9 +598,9 @@ impl <'resolver> scale_type_resolver::ResolvedTypeVisitor<'resolver> for OrderVi
     }
 }
 
-#[derive(Copy,Clone)]
+#[derive(Copy, Clone)]
 struct StoreVisitor;
-impl <'resolver> scale_type_resolver::ResolvedTypeVisitor<'resolver> for StoreVisitor {
+impl<'resolver> scale_type_resolver::ResolvedTypeVisitor<'resolver> for StoreVisitor {
     type TypeId = TypeName;
     type Value = Option<BitsStoreFormat>;
 
@@ -661,8 +666,8 @@ impl<Item, A: ExactSizeIterator<Item = Item>, B: ExactSizeIterator<Item = Item>>
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::test_utils::to_resolved_info;
     use alloc::boxed::Box;
-    use crate::test_utils::{to_resolved_info,to_resolved_info_str};
 
     type ResolvedTypeInfo = crate::test_utils::ResolvedTypeInfo<TypeRegistryResolveError>;
 
@@ -759,7 +764,7 @@ mod test {
         ];
 
         for (name, expected) in cases.into_iter() {
-            assert_eq!(to_resolved_info_str(name, &types), expected);
+            assert_eq!(to_resolved_info(name, &types), expected);
         }
     }
 
@@ -791,8 +796,7 @@ mod test {
             )
             .unwrap();
 
-        let resolved =
-            to_resolved_info_str("AliasForBitVec<AliasForU16, BitVecLsb0Alias2>", &types);
+        let resolved = to_resolved_info("AliasForBitVec<AliasForU16, BitVecLsb0Alias2>", &types);
 
         assert_eq!(
             resolved,

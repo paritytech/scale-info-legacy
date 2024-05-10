@@ -13,13 +13,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::TypeName;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use scale_type_resolver::{TypeResolver,BitsOrderFormat,BitsStoreFormat,Primitive};
-use crate::TypeName;
+use core::fmt::Debug;
+use scale_type_resolver::{BitsOrderFormat, BitsStoreFormat, Primitive, TypeResolver};
 
 /// Resolve a type name into a [`ResolvedTypeInfo`] output.
-pub fn to_resolved_info<T: TypeResolver<TypeId = TypeName>>(type_id: TypeName, types: &T) -> ResolvedTypeInfo<T::Error> {
+pub fn to_resolved_info<T, N>(type_id: N, types: &T) -> ResolvedTypeInfo<T::Error>
+where
+    T: TypeResolver<TypeId = TypeName>,
+    N: TryInto<TypeName>,
+    N::Error: Debug,
+{
     use scale_type_resolver::visitor;
 
     // Build a quick visitor which turns resolved type info
@@ -68,21 +74,10 @@ pub fn to_resolved_info<T: TypeResolver<TypeId = TypeName>>(type_id: TypeName, t
             ResolvedTypeInfo::BitSequence(store_format, order_format)
         });
 
-    match types.resolve_type(type_id, visitor) {
+    match types.resolve_type(type_id.try_into().expect("type name should be valid"), visitor) {
         Err(e) => ResolvedTypeInfo::Err(e),
         Ok(info) => info,
     }
-}
-
-/// Resolve a string into a [`ResolvedTypeInfo`] output.
-pub fn to_resolved_info_str<T: TypeResolver<TypeId = TypeName>>(type_id_str: &str, types: &T) -> ResolvedTypeInfo<T::Error> {
-    let type_id = match TypeName::parse(type_id_str) {
-        Ok(id) => id,
-        Err(_e) => {
-            return ResolvedTypeInfo::InvalidTypeName(type_id_str.to_owned());
-        }
-    };
-    to_resolved_info(type_id, types)
 }
 
 /// Information about some type we've tried to resolve.
@@ -90,7 +85,6 @@ pub fn to_resolved_info_str<T: TypeResolver<TypeId = TypeName>>(type_id_str: &st
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ResolvedTypeInfo<E> {
     Err(E),
-    InvalidTypeName(String),
     NotFound,
     CompositeOf(Vec<(Option<String>, ResolvedTypeInfo<E>)>),
     VariantOf(Vec<(String, Vec<(Option<String>, ResolvedTypeInfo<E>)>)>),
