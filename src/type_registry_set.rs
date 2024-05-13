@@ -19,7 +19,8 @@
 //! which itself also implements [`scale_type_resolver::TypeResolver`].
 
 use crate::type_registry::{TypeRegistryResolveError, TypeRegistryResolveWithParentError};
-use crate::{TypeName, TypeRegistry};
+use crate::{LookupName, TypeRegistry};
+use alloc::borrow::Cow;
 use scale_type_resolver::TypeResolver;
 
 /// This can be constructed from an iterator of [`crate::TypeRegistry`]s. When resolving types
@@ -27,18 +28,18 @@ use scale_type_resolver::TypeResolver;
 /// registries as a stack, looking in the last provided registry first and then working back
 /// through them until it can find the type, failing with an error if none of the registries
 /// contain an answer.
-pub struct TypeRegistrySet {
-    registries: Vec<TypeRegistry>,
+pub struct TypeRegistrySet<'a> {
+    registries: Vec<Cow<'a, TypeRegistry>>,
 }
 
-impl core::iter::FromIterator<TypeRegistry> for TypeRegistrySet {
-    fn from_iter<T: IntoIterator<Item = TypeRegistry>>(iter: T) -> Self {
-        TypeRegistrySet { registries: iter.into_iter().collect() }
+impl<'a, R: Into<Cow<'a, TypeRegistry>>> core::iter::FromIterator<R> for TypeRegistrySet<'a> {
+    fn from_iter<T: IntoIterator<Item = R>>(iter: T) -> Self {
+        TypeRegistrySet { registries: iter.into_iter().map(Into::into).collect() }
     }
 }
 
-impl TypeResolver for TypeRegistrySet {
-    type TypeId = TypeName;
+impl<'a> TypeResolver for TypeRegistrySet<'a> {
+    type TypeId = LookupName;
     type Error = TypeRegistryResolveError;
 
     fn resolve_type<
@@ -75,24 +76,27 @@ mod test {
     use super::*;
     use crate::test_utils::{to_resolved_info, ResolvedTypeInfo};
     use crate::type_shape::Primitive;
-    use crate::TypeShape;
+    use crate::{InsertName, TypeShape};
     use scale_type_resolver::{BitsOrderFormat, BitsStoreFormat};
 
-    fn tn(name: &str) -> TypeName {
-        TypeName::parse(name).unwrap()
+    fn tn(name: &str) -> LookupName {
+        LookupName::parse(name).unwrap()
+    }
+    fn n(name: &str) -> InsertName {
+        InsertName::parse(name).unwrap()
     }
 
     #[test]
     fn picks_last_registry_first() {
         let mut a = TypeRegistry::empty();
-        a.insert("u8", TypeShape::Primitive(Primitive::U8)).unwrap();
-        a.insert("Val", TypeShape::Primitive(Primitive::I8)).unwrap();
+        a.insert_str("u8", TypeShape::Primitive(Primitive::U8)).unwrap();
+        a.insert_str("Val", TypeShape::Primitive(Primitive::I8)).unwrap();
 
         let mut b = TypeRegistry::empty();
-        b.insert("Val", TypeShape::Primitive(Primitive::I16)).unwrap();
+        b.insert_str("Val", TypeShape::Primitive(Primitive::I16)).unwrap();
 
         let mut c = TypeRegistry::empty();
-        c.insert(tn("Val").in_pallet("balances"), TypeShape::Primitive(Primitive::I32)).unwrap();
+        c.insert(n("Val").in_pallet("balances"), TypeShape::Primitive(Primitive::I32));
 
         // Resolving will look in c, then b, then a.
         let types = TypeRegistrySet::from_iter([a, b, c]);
@@ -111,17 +115,17 @@ mod test {
     #[test]
     fn resolve_bitvec_backwards_across_registries() {
         let mut a = TypeRegistry::empty();
-        a.insert(
+        a.insert_str(
             "BitVec",
             TypeShape::BitSequence { order: tn("bitvec::order::Lsb0"), store: tn("Store") },
         )
         .unwrap();
 
         let mut b = TypeRegistry::empty();
-        b.insert("bitvec::order::Lsb0", TypeShape::StructOf(vec![])).unwrap();
+        b.insert_str("bitvec::order::Lsb0", TypeShape::StructOf(vec![])).unwrap();
 
         let mut c = TypeRegistry::empty();
-        c.insert("Store", TypeShape::Primitive(Primitive::U8)).unwrap();
+        c.insert_str("Store", TypeShape::Primitive(Primitive::U8)).unwrap();
 
         // Resolving will look in c, then b, then a.
         let types = TypeRegistrySet::from_iter([a, b, c]);
@@ -137,13 +141,13 @@ mod test {
     #[test]
     fn resolve_alias_backwards_across_registries() {
         let mut a = TypeRegistry::empty();
-        a.insert("A", TypeShape::AliasOf(tn("B"))).unwrap();
+        a.insert_str("A", TypeShape::AliasOf(tn("B"))).unwrap();
 
         let mut b = TypeRegistry::empty();
-        b.insert("B", TypeShape::AliasOf(tn("C"))).unwrap();
+        b.insert_str("B", TypeShape::AliasOf(tn("C"))).unwrap();
 
         let mut c = TypeRegistry::empty();
-        c.insert("C", TypeShape::Primitive(Primitive::Bool)).unwrap();
+        c.insert_str("C", TypeShape::Primitive(Primitive::Bool)).unwrap();
 
         // Resolving will look in c, then b, then a.
         let types = TypeRegistrySet::from_iter([a, b, c]);

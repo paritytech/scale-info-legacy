@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::TypeName;
+use crate::LookupName;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::fmt::Debug;
@@ -22,8 +22,8 @@ use scale_type_resolver::{BitsOrderFormat, BitsStoreFormat, Primitive, TypeResol
 /// Resolve a type name into a [`ResolvedTypeInfo`] output.
 pub fn to_resolved_info<T, N>(type_id: N, types: &T) -> ResolvedTypeInfo<T::Error>
 where
-    T: TypeResolver<TypeId = TypeName>,
-    N: TryInto<TypeName>,
+    T: TypeResolver<TypeId = LookupName>,
+    N: TryInto<LookupName>,
     N::Error: Debug,
 {
     use scale_type_resolver::visitor;

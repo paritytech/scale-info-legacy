@@ -34,7 +34,9 @@
 
 extern crate alloc;
 
-pub mod type_name;
+pub mod chain_types;
+pub mod insert_name;
+pub mod lookup_name;
 pub mod type_registry;
 pub mod type_registry_set;
 pub mod type_shape;
@@ -43,4 +45,7 @@ pub mod type_shape;
 mod test_utils;
 
 // Export the main types here for ease of use:
-pub use {type_name::TypeName, type_registry::TypeRegistry, type_shape::TypeShape};
+pub use {
+    insert_name::InsertName, lookup_name::LookupName, type_registry::TypeRegistry,
+    type_shape::TypeShape,
+};
