@@ -129,7 +129,7 @@ impl core::fmt::Display for InsertName {
                 if idx != 0 {
                     f.write_str(", ")?;
                 }
-                f.write_str(&param)?;
+                f.write_str(param)?;
             }
             f.write_char('>')?;
         }

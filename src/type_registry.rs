@@ -305,8 +305,17 @@ impl TypeRegistry {
     ) -> Result<V::Value, TypeRegistryResolveError> {
         match self.resolve_type_with_parent(self, type_id, visitor) {
             Err(TypeRegistryResolveWithParentError::Other(e)) => Err(e),
-            Err(TypeRegistryResolveWithParentError::TypeNotFound { visitor, .. }) => {
-                Ok(visitor.visit_not_found())
+            Err(TypeRegistryResolveWithParentError::TypeNotFound { visitor, mut type_name }) => {
+                if type_name.pallet().is_some() {
+                    // if the lookup was pallet scoped, try again without any pallet scope
+                    // to see if we do any better that way!
+                    type_name.take_pallet();
+                    return self.resolve_type(type_name, visitor);
+                } else {
+                    // else, follow our rules and call the `visit_not_found` function because
+                    // we couldn't find any matches.
+                    Ok(visitor.visit_not_found())
+                }
             }
             Ok(val) => Ok(val),
         }
@@ -315,7 +324,7 @@ impl TypeRegistry {
     /// Extend this type registry with the one provided. In case of any matches, the provided types
     /// will overwrite the existing ones.
     pub fn extend(&mut self, other: TypeRegistry) {
-        self.types.extend(other.types.into_iter());
+        self.types.extend(other.types);
     }
 
     /// Like [`TypeRegistry::resolve_type()`], but:
@@ -324,6 +333,9 @@ impl TypeRegistry {
     ///   allowing them to be reused elsewhere.
     /// - If we need to internally resolve an inner type, for example some alias type name, or bitvec
     ///   store/order types, then we'll call the provided parent resolver to handle this.
+    /// - If given a pallet scoped type, this will _only_ look for it in said pallet scope. You should
+    ///   remove the pallet and try again if you also want to look up the type in the global scope.
+    #[allow(clippy::result_large_err)]
     pub(crate) fn resolve_type_with_parent<'this, Parent, V>(
         &'this self,
         parent: &'this Parent,
@@ -339,17 +351,7 @@ impl TypeRegistry {
 
         match type_id.def() {
             LookupNameDef::Named(ty) => {
-                let Some((ty_key, type_info)) =
-                    lookup(pallet, ty.name(), &self.types).or_else(|| {
-                        if pallet.is_some() {
-                            // We did a scoped lookup and found nothing, so now try without scope.
-                            lookup(None, ty.name(), &self.types)
-                        } else {
-                            // We did an un-scoped lookup and found nothing, so give up!
-                            None
-                        }
-                    })
-                else {
+                let Some((ty_key, type_info)) = lookup(pallet, ty.name(), &self.types) else {
                     return Err(TypeRegistryResolveWithParentError::TypeNotFound {
                         type_name: type_id,
                         visitor,

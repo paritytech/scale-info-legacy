@@ -30,6 +30,8 @@ use serde::de::Error;
 /// [`scale_type_resolver::TypeResolver`]. Use [`serde`] to deserialize something into this
 /// struct (the deserialization logic is tuned to work best with `serde_json`, but any self
 /// describing format should work so long as it's the right shape).
+///
+/// TODO JSDW add an example here of the JSON format and decoding!##############################################################<<<<<<<<<<<<<<<
 #[derive(Debug, serde::Deserialize)]
 pub struct ChainTypeRegistry {
     // We always include the built in types at a bare minimum, which we'll put here
@@ -45,7 +47,7 @@ pub struct ChainTypeRegistry {
 impl ChainTypeRegistry {
     /// Hand back a [`TypeRegistrySet`] that is able to resolve types for the given spec version.
     pub fn for_spec_version(&self, spec_version: u64) -> TypeRegistrySet<'_> {
-        let basics = std::iter::once(&self.basics);
+        let basics = core::iter::once(&self.basics);
         let globals = core::iter::once(&self.global);
         let for_spec = self
             .for_spec
@@ -74,6 +76,8 @@ fn deserialize_global<'de, D: serde::Deserializer<'de>>(
     let chain_types = DeserializableChainTypes::deserialize(deserializer)?;
     Ok(chain_types.into_type_registry())
 }
+
+#[allow(clippy::type_complexity)]
 fn deserialize_for_spec<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Vec<((u64, u64), TypeRegistry)>, D::Error> {
@@ -106,12 +110,22 @@ impl DeserializableChainTypes {
 /// The global and per-pallet types for a chain used within the given spec versions
 #[derive(serde::Deserialize)]
 pub struct DeserializableChainTypesForSpec {
+    #[serde(deserialize_with = "deserialize_spec_range")]
     range: (u64, u64),
     #[serde(flatten)]
     types: DeserializableChainTypes,
 }
 
+// If nulls are given in spec range, we use min or max value for either side.
+fn deserialize_spec_range<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<(u64, u64), D::Error> {
+    let (min, max) = <(Option<u64>, Option<u64>)>::deserialize(deserializer)?;
+    Ok((min.unwrap_or(u64::MIN), max.unwrap_or(u64::MAX)))
+}
+
 /// The shape of a type.
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, PartialEq)]
 enum DeserializableShape {
     AliasOf(LookupName),
@@ -330,9 +344,11 @@ impl<'de> serde::Deserialize<'de> for DeserializableEnumSeq {
                         "fields" => {
                             fields = Some(map.next_value()?);
                         }
-                        other => return Err(A::Error::custom(format!(
+                        other => {
+                            return Err(A::Error::custom(format!(
                             "field '{other}' not expected. Expecting 'index', 'name' or 'fields'"
-                        ))),
+                        )))
+                        }
                     }
                 }
 
@@ -359,6 +375,30 @@ mod test {
 
     fn ln(s: &str) -> LookupName {
         LookupName::parse(s).unwrap()
+    }
+
+    #[test]
+    fn deserialize_spec_range_works() {
+        let cases = [
+            ("[12, 30]", (12, 30)),
+            ("[null, 30]", (u64::MIN, 30)),
+            ("[1000, null]", (1000, u64::MAX)),
+            ("[null, null]", (u64::MIN, u64::MAX)),
+        ];
+
+        for (range, expected) in cases {
+            let json = format!(r#"{{ "range": {range}, "types": {{}}, "palletTypes": {{}} }}"#);
+            let res = serde_json::from_str::<DeserializableChainTypesForSpec>(&json).unwrap();
+            assert_eq!(res.range, expected);
+        }
+    }
+
+    #[test]
+    fn deserializable_shape_enum_mixed_up_fails() {
+        // Can't mix _enum with other props.
+        let this_should_fail = r#"{ "_enum": ["One", "Two", "Three"], "foo": "u64" }"#;
+        let _ =
+            serde_json::from_str::<DeserializableShape>(this_should_fail).expect_err("should fail");
     }
 
     #[test]
@@ -434,7 +474,7 @@ mod test {
 
         for (json, expected) in examples {
             let actual: DeserializableShape =
-                serde_json::from_str(json).expect(&format!("{json} should parse"));
+                serde_json::from_str(json).unwrap_or_else(|_| panic!("{json} should parse"));
             assert_eq!(actual, expected);
         }
     }
@@ -479,7 +519,7 @@ mod test {
             "forSpec": [
                 {
                     // From 0-1000 (inclusive), we'll use these types.
-                    "range": [0, 1000],
+                    "range": [null, 1000],
                     "types": {
                         "Foo": "u64",
                         "Tuple": ["bool", "Vec<String>"],

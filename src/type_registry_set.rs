@@ -50,22 +50,35 @@ impl<'a> TypeResolver for TypeRegistrySet<'a> {
         mut type_id: Self::TypeId,
         mut visitor: V,
     ) -> Result<V::Value, Self::Error> {
-        for registry in self.registries.iter().rev() {
-            match registry.resolve_type_with_parent(self, type_id, visitor) {
-                // Found a value! return it.
-                Ok(val) => return Ok(val),
-                // Hit some other error; return it.
-                Err(TypeRegistryResolveWithParentError::Other(e)) => return Err(e),
-                // The type wasn't found; we'll continue to the next registry in the vec.
-                Err(TypeRegistryResolveWithParentError::TypeNotFound {
-                    type_name: tn,
-                    visitor: v,
-                }) => {
-                    type_id = tn;
-                    visitor = v;
+        macro_rules! resolve_type {
+            () => {
+                for registry in self.registries.iter().rev() {
+                    match registry.resolve_type_with_parent(self, type_id, visitor) {
+                        // Found a value! return it.
+                        Ok(val) => return Ok(val),
+                        // Hit some other error; return it.
+                        Err(TypeRegistryResolveWithParentError::Other(e)) => return Err(e),
+                        // The type wasn't found; we'll continue to the next registry in the vec.
+                        Err(TypeRegistryResolveWithParentError::TypeNotFound {
+                            type_name: tn,
+                            visitor: v,
+                        }) => {
+                            type_id = tn;
+                            visitor = v;
+                        }
+                    }
                 }
-            }
+            };
         }
+
+        resolve_type!();
+
+        // If the lookup was pallet scoped and we didn't find anything, then now we can remove
+        // the pallet scope and try to lookup the type again in the global scope.
+        if type_id.take_pallet().is_some() {
+            resolve_type!();
+        }
+
         // If we get here, then the type wasn't found in any of our registries, so error.
         Err(TypeRegistryResolveError::TypeNotFound)
     }
@@ -79,11 +92,31 @@ mod test {
     use crate::{InsertName, TypeShape};
     use scale_type_resolver::{BitsOrderFormat, BitsStoreFormat};
 
-    fn tn(name: &str) -> LookupName {
+    fn ln(name: &str) -> LookupName {
         LookupName::parse(name).unwrap()
     }
     fn n(name: &str) -> InsertName {
         InsertName::parse(name).unwrap()
+    }
+
+    #[test]
+    fn picks_pallet_scope_before_global() {
+        let mut a = TypeRegistry::empty();
+        a.insert_str("Val", TypeShape::Primitive(Primitive::I8)).unwrap();
+        a.insert(n("Val").in_pallet("p"), TypeShape::Primitive(Primitive::U8));
+
+        let mut b = TypeRegistry::empty();
+        b.insert_str("Val", TypeShape::Primitive(Primitive::I16)).unwrap();
+
+        let types = TypeRegistrySet::from_iter([a, b]);
+
+        // Globally, we find the most recent val first.
+        assert_eq!(to_resolved_info("Val", &types), ResolvedTypeInfo::Primitive(Primitive::I16));
+        // In pallet, we find the first in-pallet val anywhere before looking at any global ones.
+        assert_eq!(
+            to_resolved_info(ln("Val").in_pallet("p"), &types),
+            ResolvedTypeInfo::Primitive(Primitive::U8)
+        );
     }
 
     #[test]
@@ -107,7 +140,7 @@ mod test {
         assert_eq!(to_resolved_info("Val", &types), ResolvedTypeInfo::Primitive(Primitive::I16));
         // Use the pallet specific val if the ID we pass is in that pallet.
         assert_eq!(
-            to_resolved_info(tn("Val").in_pallet("balances"), &types),
+            to_resolved_info(ln("Val").in_pallet("balances"), &types),
             ResolvedTypeInfo::Primitive(Primitive::I32)
         );
     }
@@ -117,7 +150,7 @@ mod test {
         let mut a = TypeRegistry::empty();
         a.insert_str(
             "BitVec",
-            TypeShape::BitSequence { order: tn("bitvec::order::Lsb0"), store: tn("Store") },
+            TypeShape::BitSequence { order: ln("bitvec::order::Lsb0"), store: ln("Store") },
         )
         .unwrap();
 
@@ -141,10 +174,10 @@ mod test {
     #[test]
     fn resolve_alias_backwards_across_registries() {
         let mut a = TypeRegistry::empty();
-        a.insert_str("A", TypeShape::AliasOf(tn("B"))).unwrap();
+        a.insert_str("A", TypeShape::AliasOf(ln("B"))).unwrap();
 
         let mut b = TypeRegistry::empty();
-        b.insert_str("B", TypeShape::AliasOf(tn("C"))).unwrap();
+        b.insert_str("B", TypeShape::AliasOf(ln("C"))).unwrap();
 
         let mut c = TypeRegistry::empty();
         c.insert_str("C", TypeShape::Primitive(Primitive::Bool)).unwrap();
