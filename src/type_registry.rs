@@ -56,7 +56,7 @@ pub enum TypeRegistryResolveError {
 #[cfg(feature = "std")]
 impl std::error::Error for TypeRegistryResolveError {}
 
-/// An error when using [`TypeRegistry::try_resolve_type()`]. This returns the visitor if
+/// An error when using [`TypeRegistry::resolve_type_with_parent()`]. This returns the visitor if
 /// the type wasn't found, allowing us to use it again with a different registry or whatever.
 #[allow(missing_docs)]
 #[derive(Debug, Clone, derive_more::Display)]
