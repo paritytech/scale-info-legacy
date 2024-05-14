@@ -46,6 +46,6 @@ mod test_utils;
 
 // Export the main types here for ease of use:
 pub use {
-    insert_name::InsertName, lookup_name::LookupName, type_registry::TypeRegistry,
-    type_shape::TypeShape,
+    chain_types::ChainTypeRegistry, insert_name::InsertName, lookup_name::LookupName,
+    type_registry::TypeRegistry, type_registry_set::TypeRegistrySet, type_shape::TypeShape,
 };

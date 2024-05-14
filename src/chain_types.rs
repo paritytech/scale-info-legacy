@@ -20,7 +20,7 @@
 use crate::type_registry_set::TypeRegistrySet;
 use crate::type_shape::{Field, TypeShape, Variant, VariantDesc};
 use crate::{InsertName, LookupName, TypeRegistry};
-use alloc::borrow::ToOwned;
+use alloc::borrow::{Cow, ToOwned};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec;
@@ -36,7 +36,93 @@ use serde::de::Error;
 /// struct (the deserialization logic is tuned to work best with `serde_json`, but any self
 /// describing format should work so long as it's the right shape).
 ///
-/// TODO JSDW add an example here of the JSON format and decoding!##############################################################<<<<<<<<<<<<<<<
+/// # Example
+///
+/// ```rust
+/// use scale_info_legacy::ChainTypeRegistry;
+///
+/// let json = serde_json::json!({
+///     // Types that are present globally, regardless of spec version:
+///     "global": {
+///         // Types here exist across all pallets.
+///         "types": {
+///             // A simple type alias:
+///             "Foo": "u8",
+///             // A tuple (you can also write "(bool, Vec<String>)" to achieve similar):
+///             "Tuple": ["bool", "Vec<String>"],
+///             // A struct with 2 fields, a and b, and a generic type.
+///             "StructOf<T>": {
+///                 "a": "bool",
+///                 "b": "T"
+///             },
+///             // The simplest way to list enum variants when none have associated data:
+///             "EnumWithoutData": {
+///                 "_enum": ["One", "Two", "Three"]
+///             },
+///             // We can also use a struct form to specify the data that each variant has:
+///             "EnumWithData": {
+///                 "_enum": {
+///                     "A": "u64",
+///                     "B": ["bool", "char"],
+///                     "C": { "field_a": "String", "field_b": "bool" }
+///                 }
+///             },
+///             // We can be very explicit if we want to specify the enum variant indexes:
+///             "EnumWithExplicitDetails": {
+///                 "_enum": [
+///                     { "name": "A", "index": 0, "fields": "u64" },
+///                     { "name": "B", "index": 1, "fields": ["bool", "char"] },
+///                     { "name": "C", "index": 2, "fields": { "field_a": "String", "field_b": "bool" } }
+///                 ]
+///             }
+///         },
+///         // Any type in palletTypes only exists within a certain pallet.
+///         "palletTypes": {
+///             // The Balance type only exists in the balances pallet.
+///             "balances": {
+///                 "Balance": "u64"
+///             },
+///             // Fee and AssetsEnum only exist in the assets pallet.
+///             "assets": {
+///                 "Fee": "u32",
+///                 "AssetsEnum": {
+///                     "_enum": ["One", "Two", "Three"]
+///                 }
+///             }
+///         }
+///     },
+///     // We can define types that are only relevant in a specific spec range.
+///     // We can have overlaps here; later definitions trump earlier ones if so.
+///     "forSpec": [
+///         {
+///             // From 0-1000 (inclusive), we'll use these types.
+///             "range": [null, 1000],
+///             "types": {
+///                 "Foo": "u64",
+///                 "Tuple": ["bool", "Vec<String>"],
+///                 "StructOf<T>": { "a": "bool", "b": "T" },
+///             },
+///             "palletTypes": {
+///                 "balances": {
+///                     "Balance": "u128"
+///                 },
+///             }
+///         },
+///         {
+///             // From 1001-2000 (inclusive), we'll use these types.
+///             "range": [1001, 2000],
+///             "types": {
+///                 "Foo": "String",
+///                 "Tuple": ["bool", "Vec<String>"],
+///                 "StructOf<T>": { "a": "bool", "b": "T" },
+///             }
+///         }
+///     ]
+/// });
+///
+/// let tys: ChainTypeRegistry = serde_json::from_value(json).unwrap();
+/// let resolver = tys.for_spec_version(12345);
+/// ```
 #[derive(Debug, serde::Deserialize)]
 pub struct ChainTypeRegistry {
     // We always include the built in types at a bare minimum, which we'll put here
@@ -338,8 +424,8 @@ impl<'de> serde::Deserialize<'de> for DeserializableEnumSeq {
                 let mut name: Option<String> = None;
                 let mut fields: Option<DeserializableEnumFields> = None;
 
-                while let Some(key) = map.next_key()? {
-                    match key {
+                while let Some(key) = map.next_key::<Cow<'de, str>>()? {
+                    match &*key {
                         "index" => {
                             index = Some(map.next_value()?);
                         }
@@ -492,28 +578,46 @@ mod test {
             "global": {
                 // Types here exist across all pallets.
                 "types": {
+                    // A simple type alias:
                     "Foo": "u8",
+                    // A tuple (you can also write "(bool, Vec<String>)" to achieve similar):
                     "Tuple": ["bool", "Vec<String>"],
-                    "StructOf<T>": { "a": "bool", "b": "T" },
-                    "MyBasicEnum": {
+                    // A struct with 2 fields, a and b, and a generic type.
+                    "StructOf<T>": {
+                        "a": "bool",
+                        "b": "T"
+                    },
+                    // The simplest way to list enum variants when none have associated data:
+                    "EnumWithoutData": {
                         "_enum": ["One", "Two", "Three"]
                     },
+                    // We can also use a struct form to specify the data that each variant has:
                     "EnumWithData": {
                         "_enum": {
                             "A": "u64",
                             "B": ["bool", "char"],
                             "C": { "field_a": "String", "field_b": "bool" }
                         }
+                    },
+                    // We can be very explicit if we want to specify the enum variant indexes:
+                    "EnumWithExplicitDetails": {
+                        "_enum": [
+                            { "name": "A", "index": 0, "fields": "u64" },
+                            { "name": "B", "index": 1, "fields": ["bool", "char"] },
+                            { "name": "C", "index": 2, "fields": { "field_a": "String", "field_b": "bool" } }
+                        ]
                     }
                 },
                 // Any type in palletTypes only exists within a certain pallet.
                 "palletTypes": {
+                    // The Balance type only exists in the balances pallet.
                     "balances": {
                         "Balance": "u64"
                     },
+                    // Fee and AssetsEnum only exist in the assets pallet.
                     "assets": {
                         "Fee": "u32",
-                        "Type": {
+                        "AssetsEnum": {
                             "_enum": ["One", "Two", "Three"]
                         }
                     }
