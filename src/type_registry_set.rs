@@ -33,6 +33,15 @@ pub struct TypeRegistrySet<'a> {
     registries: Vec<Cow<'a, TypeRegistry>>,
 }
 
+impl<'a> TypeRegistrySet<'a> {
+    /// Take ownership of this [`TypeRegistrySet`]. If the underlying type registries are
+    /// borrowed, then they are cloned in order to take ownership of them.
+    pub fn to_owned(self) -> TypeRegistrySet<'static> {
+        let registries = self.registries.into_iter().map(|r| Cow::Owned(r.into_owned())).collect();
+        TypeRegistrySet { registries }
+    }
+}
+
 impl<'a, R: Into<Cow<'a, TypeRegistry>>> core::iter::FromIterator<R> for TypeRegistrySet<'a> {
     fn from_iter<T: IntoIterator<Item = R>>(iter: T) -> Self {
         TypeRegistrySet { registries: iter.into_iter().map(Into::into).collect() }
