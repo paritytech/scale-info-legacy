@@ -20,6 +20,11 @@
 use crate::type_registry_set::TypeRegistrySet;
 use crate::type_shape::{Field, TypeShape, Variant, VariantDesc};
 use crate::{InsertName, LookupName, TypeRegistry};
+use alloc::borrow::ToOwned;
+use alloc::format;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
 use hashbrown::HashMap;
 use serde::de::Deserialize;
 use serde::de::Error;

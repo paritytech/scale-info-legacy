@@ -16,6 +16,9 @@
 //! This module provides the name used to insert types in a registry.
 
 use alloc::borrow::Cow;
+use alloc::borrow::ToOwned;
+use alloc::format;
+use alloc::string::{String, ToString};
 use core::fmt::Write;
 use smallvec::SmallVec;
 

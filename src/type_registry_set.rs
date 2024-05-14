@@ -21,6 +21,7 @@
 use crate::type_registry::{TypeRegistryResolveError, TypeRegistryResolveWithParentError};
 use crate::{LookupName, TypeRegistry};
 use alloc::borrow::Cow;
+use alloc::vec::Vec;
 use scale_type_resolver::TypeResolver;
 
 /// This can be constructed from an iterator of [`crate::TypeRegistry`]s. When resolving types

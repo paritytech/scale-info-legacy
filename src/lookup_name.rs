@@ -18,7 +18,8 @@
 
 use alloc::{
     borrow::{Cow, ToOwned},
-    string::String,
+    format,
+    string::{String, ToString},
 };
 use smallstr::SmallString;
 use smallvec::SmallVec;
