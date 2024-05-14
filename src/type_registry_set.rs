@@ -91,6 +91,7 @@ mod test {
     use crate::test_utils::{to_resolved_info, ResolvedTypeInfo};
     use crate::type_shape::Primitive;
     use crate::{InsertName, TypeShape};
+    use alloc::vec;
     use scale_type_resolver::{BitsOrderFormat, BitsStoreFormat};
 
     fn ln(name: &str) -> LookupName {

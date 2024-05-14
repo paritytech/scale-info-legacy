@@ -14,7 +14,9 @@
 // limitations under the License.
 
 use crate::LookupName;
+use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
+use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt::Debug;
 use scale_type_resolver::{BitsOrderFormat, BitsStoreFormat, Primitive, TypeResolver};
