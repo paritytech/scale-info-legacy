@@ -37,8 +37,6 @@ use smallvec::SmallVec;
 pub enum TypeRegistryResolveError {
     #[display(fmt = "'{_0}' is not a valid type name: {_1}")]
     LookupNameInvalid(String, lookup_name::ParseError),
-    #[display(fmt = "Type not found")]
-    TypeNotFound,
     #[display(
         fmt = "Wrong number of params provided for {type_name}: expected {expected_params} but got {provided_params}"
     )]

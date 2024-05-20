@@ -84,8 +84,8 @@ impl<'a> TypeRegistrySet<'a> {
             resolve_type!();
         }
 
-        // If we get here, then the type wasn't found in any of our registries, so error.
-        Err(TypeRegistryResolveError::TypeNotFound)
+        // We couldn't find the type, so call the "not found" method on the visitor.
+        Ok(visitor.visit_not_found())
     }
 }
 
