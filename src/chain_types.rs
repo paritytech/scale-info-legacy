@@ -217,7 +217,8 @@ fn deserialize_spec_range<'de, D: serde::Deserializer<'de>>(
 
 /// The shape of a type.
 #[allow(clippy::enum_variant_names)]
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 enum DeserializableShape {
     AliasOf(LookupName),
     StructOf(Vec<Field>),

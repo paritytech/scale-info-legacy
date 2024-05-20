@@ -53,7 +53,8 @@ pub enum TypeShape {
 }
 
 /// A struct field.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct Field {
     /// The struct field name.
     pub name: String,
@@ -62,7 +63,8 @@ pub struct Field {
 }
 
 /// An enum variant.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct Variant {
     /// The variant index.
     pub index: u8,
@@ -73,7 +75,8 @@ pub struct Variant {
 }
 
 /// The shape of the variant.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
+#[cfg_attr(test, derive(PartialEq))]
 pub enum VariantDesc {
     /// named variant fields are basically a struct.
     StructOf(Vec<Field>),

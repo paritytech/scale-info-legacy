@@ -63,6 +63,7 @@ impl Default for LookupName {
     }
 }
 
+#[cfg(test)]
 impl PartialEq for LookupName {
     fn eq(&self, other: &Self) -> bool {
         // Bit of a hack, but it does the trick:
