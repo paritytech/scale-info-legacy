@@ -40,26 +40,21 @@ impl<'a> TypeRegistrySet<'a> {
         let registries = self.registries.into_iter().map(|r| Cow::Owned(r.into_owned())).collect();
         TypeRegistrySet { registries }
     }
-}
 
-impl<'a, R: Into<Cow<'a, TypeRegistry>>> core::iter::FromIterator<R> for TypeRegistrySet<'a> {
-    fn from_iter<T: IntoIterator<Item = R>>(iter: T) -> Self {
-        TypeRegistrySet { registries: iter.into_iter().map(Into::into).collect() }
-    }
-}
-
-impl<'a> TypeResolver for TypeRegistrySet<'a> {
-    type TypeId = LookupName;
-    type Error = TypeRegistryResolveError;
-
-    fn resolve_type<
+    /// Resolve some type information by providing a [`LookupName`], which is the concrete name of
+    /// a type we want to know how to decode values for, and a `visitor` which will be called in
+    /// order to describe how to decode it.
+    ///
+    /// This will work through the inner type registries from latest to earliest until it finds a
+    /// matching type.
+    pub fn resolve_type<
         'this,
-        V: scale_type_resolver::ResolvedTypeVisitor<'this, TypeId = Self::TypeId>,
+        V: scale_type_resolver::ResolvedTypeVisitor<'this, TypeId = LookupName>,
     >(
         &'this self,
-        mut type_id: Self::TypeId,
+        mut type_id: LookupName,
         mut visitor: V,
-    ) -> Result<V::Value, Self::Error> {
+    ) -> Result<V::Value, TypeRegistryResolveError> {
         macro_rules! resolve_type {
             () => {
                 for registry in self.registries.iter().rev() {
@@ -91,6 +86,28 @@ impl<'a> TypeResolver for TypeRegistrySet<'a> {
 
         // If we get here, then the type wasn't found in any of our registries, so error.
         Err(TypeRegistryResolveError::TypeNotFound)
+    }
+}
+
+impl<'a, R: Into<Cow<'a, TypeRegistry>>> core::iter::FromIterator<R> for TypeRegistrySet<'a> {
+    fn from_iter<T: IntoIterator<Item = R>>(iter: T) -> Self {
+        TypeRegistrySet { registries: iter.into_iter().map(Into::into).collect() }
+    }
+}
+
+impl<'a> TypeResolver for TypeRegistrySet<'a> {
+    type TypeId = LookupName;
+    type Error = TypeRegistryResolveError;
+
+    fn resolve_type<
+        'this,
+        V: scale_type_resolver::ResolvedTypeVisitor<'this, TypeId = Self::TypeId>,
+    >(
+        &'this self,
+        type_id: Self::TypeId,
+        visitor: V,
+    ) -> Result<V::Value, Self::Error> {
+        self.resolve_type(type_id, visitor)
     }
 }
 
