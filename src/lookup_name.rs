@@ -13,10 +13,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! This module provides a struct, [`TypeName`]. This struct represents a single concrete type
+//! This module provides a struct, [`LookupName`]. This struct represents a single concrete type
 //! that can be looked up in the [`crate::TypeRegistry`].
 
-use alloc::{borrow::ToOwned, string::String};
+use alloc::{
+    borrow::{Cow, ToOwned},
+    format,
+    string::{String, ToString},
+};
 use smallstr::SmallString;
 use smallvec::SmallVec;
 
@@ -24,7 +28,7 @@ use smallvec::SmallVec;
 pub use parser::{ParseError, ParseErrorKind};
 
 /// The name of a type that you'd like to query in the [`crate::TypeRegistry`]. Use
-/// [`TypeName::parse()`] to parse a string into a [`TypeName`], which can then be used
+/// [`LookupName::parse()`] to parse a string into a [`LookupName`], which can then be used
 /// to look up the associated details in the registry.
 ///
 /// See [`crate::TypeRegistry::resolve_type()`] for a full example.
@@ -32,14 +36,14 @@ pub use parser::{ParseError, ParseErrorKind};
 /// # Example
 ///
 /// ```rust
-/// use scale_info_legacy::TypeName;
+/// use scale_info_legacy::LookupName;
 ///
-/// let sequence = TypeName::parse("Vec<(bool, u32)>").unwrap();
-/// let array = TypeName::parse("[u8; 32]").unwrap();
-/// let tuple = TypeName::parse("(bool, u32, Vec<String>)").unwrap();
+/// let sequence = LookupName::parse("Vec<(bool, u32)>").unwrap();
+/// let array = LookupName::parse("[u8; 32]").unwrap();
+/// let tuple = LookupName::parse("(bool, u32, Vec<String>)").unwrap();
 /// ```
 #[derive(Debug, Clone)]
-pub struct TypeName {
+pub struct LookupName {
     registry: Registry,
     idx: usize,
     // Setting this means that when we try to resolve this type, we'll
@@ -50,44 +54,81 @@ pub struct TypeName {
 
 // We only implement this because `scale_type_resolver::TypeResolver` requires
 // type IDs to impl Default.
-impl Default for TypeName {
+impl Default for LookupName {
     fn default() -> Self {
         // Various methods expect the registry to have at least one type in it,
         // so we set the type to be the empty unit type.
-        let unit_type = TypeNameInner::Unnamed { params: Params::new() };
+        let unit_type = LookupNameInner::Unnamed { params: Params::new() };
         Self { registry: Registry::from_iter([unit_type]), idx: 0, pallet: None }
     }
 }
 
-impl core::fmt::Display for TypeName {
+#[cfg(test)]
+impl PartialEq for LookupName {
+    fn eq(&self, other: &Self) -> bool {
+        // Bit of a hack, but it does the trick:
+        self.to_string() == other.to_string()
+    }
+}
+
+impl core::fmt::Display for LookupName {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.def())
     }
 }
 
-impl core::str::FromStr for TypeName {
+impl core::str::FromStr for LookupName {
     type Err = ParseError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::parse(s)
     }
 }
 
-impl TypeName {
-    /// Parse an input string into a [`TypeName`]. Panics if the input
-    /// can not be parsed into a valid [`TypeName`].
-    pub fn parse_unwrap(input: &str) -> TypeName {
-        Self::parse(input).unwrap()
+impl core::convert::TryFrom<&str> for LookupName {
+    type Error = ParseError;
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        Self::parse(s)
     }
+}
 
-    /// Parse an input string into a [`TypeName`].
-    pub fn parse(input: &str) -> Result<TypeName, ParseError> {
+impl core::convert::TryFrom<String> for LookupName {
+    type Error = ParseError;
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        Self::parse(&s)
+    }
+}
+
+impl serde::Serialize for LookupName {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for LookupName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+        let s = <Cow<'de, str>>::deserialize(deserializer)?;
+        LookupName::parse(&s)
+            .map_err(|e| D::Error::custom(format!("Could not deserialize into LookupName: {e}")))
+    }
+}
+
+impl LookupName {
+    /// Parse an input string into a [`LookupName`].
+    pub fn parse(input: &str) -> Result<LookupName, ParseError> {
         use yap::IntoTokens;
         let mut tokens = input.into_tokens();
         let mut registry = Registry::new();
 
         parser::parse_type_name(&mut tokens, &mut registry)?;
 
-        Ok(TypeName {
+        Ok(LookupName {
             // Registry must have at least 1 item in, and the last item
             // we added is always the outermost one we want to point to.
             idx: registry.len() - 1,
@@ -96,10 +137,8 @@ impl TypeName {
         })
     }
 
-    /// Perform a lookup of this type name in the context of some pallet. This means that
-    /// types which are defined to exist only within the given pallet will be considered
-    /// before any global types.
-    pub fn in_pallet(mut self, pallet_name: impl Into<String>) -> TypeName {
+    /// This will scope the lookup such that it can make use of types within the given pallet.
+    pub fn in_pallet(mut self, pallet_name: impl Into<String>) -> LookupName {
         self.pallet = Some(pallet_name.into());
         self
     }
@@ -109,20 +148,25 @@ impl TypeName {
         self.pallet.as_deref()
     }
 
+    /// Remove the pallet value from the type name, leaving `None` in its place.
+    pub(crate) fn take_pallet(&mut self) -> Option<String> {
+        self.pallet.take()
+    }
+
     /// Substitute a named type with another. This is useful if we have a type name
     /// like `Vec<T>` and want to turn it into a concrete type like `Vec<u32>`.
     pub(crate) fn with_substitution(
         mut self,
         ident: &str,
-        replacement: TypeNameDef<'_>,
-    ) -> TypeName {
+        replacement: LookupNameDef<'_>,
+    ) -> LookupName {
         let original_len = self.registry.len();
 
         // These are all of the indexes we'll want to swap for something else:
         let indexes_to_replace: SmallVec<[_;2]> = self.registry
             .iter()
             .enumerate()
-            .filter(|(_, ty)| matches!(ty, TypeNameInner::Named { name, params } if params.is_empty() && name == ident))
+            .filter(|(_, ty)| matches!(ty, LookupNameInner::Named { name, params } if params.is_empty() && name == ident))
             .map(|(idx,_)| idx)
             .collect();
 
@@ -158,9 +202,9 @@ impl TypeName {
             }
 
             match inner {
-                TypeNameInner::Named { params, .. } => update_params(params),
-                TypeNameInner::Unnamed { params } => update_params(params),
-                TypeNameInner::Array { param, .. } => update_param(param),
+                LookupNameInner::Named { params, .. } => update_params(params),
+                LookupNameInner::Unnamed { params } => update_params(params),
+                LookupNameInner::Array { param, .. } => update_param(param),
             }
         }
 
@@ -171,16 +215,16 @@ impl TypeName {
     }
 
     /// Fetch the definition of this type.
-    pub(crate) fn def(&self) -> TypeNameDef<'_> {
+    pub(crate) fn def(&self) -> LookupNameDef<'_> {
         self.def_at(self.idx)
     }
 
-    /// Insert a foreign [`TypeNameDef`] into this type's registry, returning the index that it was inserted at.
-    fn insert_def(&mut self, ty: TypeNameDef<'_>, free_idxs: &[usize]) -> usize {
+    /// Insert a foreign [`LookupNameDef`] into this type's registry, returning the index that it was inserted at.
+    fn insert_def(&mut self, ty: LookupNameDef<'_>, free_idxs: &[usize]) -> usize {
         let (idx, registry) = match ty {
-            TypeNameDef::Named(t) => (t.idx, &t.handle.registry),
-            TypeNameDef::Unnamed(t) => (t.idx, &t.handle.registry),
-            TypeNameDef::Array(t) => (t.idx, &t.handle.registry),
+            LookupNameDef::Named(t) => (t.idx, &t.handle.registry),
+            LookupNameDef::Unnamed(t) => (t.idx, &t.handle.registry),
+            LookupNameDef::Array(t) => (t.idx, &t.handle.registry),
         };
 
         self.insert_entry_from_other_registry(idx, registry, &mut &*free_idxs)
@@ -200,27 +244,27 @@ impl TypeName {
         });
 
         let new_inner = match &registry.get(idx).expect("type index used which doesn't exist") {
-            TypeNameInner::Named { name, params } => {
+            LookupNameInner::Named { name, params } => {
                 let new_params = params
                     .iter()
                     .map(|idx: &usize| {
                         self.insert_entry_from_other_registry(*idx, registry, free_idxs)
                     })
                     .collect();
-                TypeNameInner::Named { name: name.clone(), params: new_params }
+                LookupNameInner::Named { name: name.clone(), params: new_params }
             }
-            TypeNameInner::Unnamed { params } => {
+            LookupNameInner::Unnamed { params } => {
                 let new_params = params
                     .iter()
                     .map(|idx: &usize| {
                         self.insert_entry_from_other_registry(*idx, registry, free_idxs)
                     })
                     .collect();
-                TypeNameInner::Unnamed { params: new_params }
+                LookupNameInner::Unnamed { params: new_params }
             }
-            TypeNameInner::Array { param, length } => {
+            LookupNameInner::Array { param, length } => {
                 let new_param = self.insert_entry_from_other_registry(*param, registry, free_idxs);
-                TypeNameInner::Array { param: new_param, length: *length }
+                LookupNameInner::Array { param: new_param, length: *length }
             }
         };
 
@@ -236,17 +280,17 @@ impl TypeName {
     }
 
     // Fetch (and expect to exist) a definition at some index.
-    fn def_at(&self, idx: usize) -> TypeNameDef<'_> {
+    fn def_at(&self, idx: usize) -> LookupNameDef<'_> {
         let entry = self.registry.get(idx).expect("idx should exist in registry");
 
         match entry {
-            TypeNameInner::Named { name, params } => {
-                TypeNameDef::Named(NamedTypeDef { idx, name, params, handle: self })
+            LookupNameInner::Named { name, params } => {
+                LookupNameDef::Named(NamedTypeDef { idx, name, params, handle: self })
             }
-            TypeNameInner::Unnamed { params } => {
-                TypeNameDef::Unnamed(UnnamedTypeDef { idx, params, handle: self })
+            LookupNameInner::Unnamed { params } => {
+                LookupNameDef::Unnamed(UnnamedTypeDef { idx, params, handle: self })
             }
-            TypeNameInner::Array { param, length } => TypeNameDef::Array(ArrayTypeDef {
+            LookupNameInner::Array { param, length } => LookupNameDef::Array(ArrayTypeDef {
                 idx,
                 param: *param,
                 length: *length,
@@ -258,7 +302,7 @@ impl TypeName {
 
 /// The definition of some type.
 #[derive(Debug, Copy, Clone)]
-pub enum TypeNameDef<'tn> {
+pub enum LookupNameDef<'tn> {
     /// Types like `Vec<T>`, `Foo` and `path::to::Bar<A,B>`, `i32`, `bool`
     /// etc are _named_ types.
     Named(NamedTypeDef<'tn>),
@@ -268,10 +312,10 @@ pub enum TypeNameDef<'tn> {
     Array(ArrayTypeDef<'tn>),
 }
 
-impl<'a> core::fmt::Display for TypeNameDef<'a> {
+impl<'a> core::fmt::Display for LookupNameDef<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            TypeNameDef::Named(named) => {
+            LookupNameDef::Named(named) => {
                 write!(f, "{}", named.name())?;
                 if !named.params.is_empty() {
                     write!(f, "<")?;
@@ -286,7 +330,7 @@ impl<'a> core::fmt::Display for TypeNameDef<'a> {
                     write!(f, ">")?;
                 }
             }
-            TypeNameDef::Unnamed(unnamed) => {
+            LookupNameDef::Unnamed(unnamed) => {
                 write!(f, "(")?;
                 if !unnamed.params.is_empty() {
                     let mut fst = true;
@@ -300,7 +344,7 @@ impl<'a> core::fmt::Display for TypeNameDef<'a> {
                 }
                 write!(f, ")")?;
             }
-            TypeNameDef::Array(array) => {
+            LookupNameDef::Array(array) => {
                 write!(f, "[{}; {}]", array.param_def(), array.length())?;
             }
         }
@@ -308,20 +352,20 @@ impl<'a> core::fmt::Display for TypeNameDef<'a> {
     }
 }
 
-impl<'tn> TypeNameDef<'tn> {
-    /// Convert this back into a [`TypeName`].
-    pub fn into_type_name(self) -> TypeName {
+impl<'tn> LookupNameDef<'tn> {
+    /// Convert this back into a [`LookupName`].
+    pub fn into_type_name(self) -> LookupName {
         match self {
-            TypeNameDef::Named(v) => v.into_type_name(),
-            TypeNameDef::Unnamed(v) => v.into_type_name(),
-            TypeNameDef::Array(v) => v.into_type_name(),
+            LookupNameDef::Named(v) => v.into_type_name(),
+            LookupNameDef::Unnamed(v) => v.into_type_name(),
+            LookupNameDef::Array(v) => v.into_type_name(),
         }
     }
 
     #[cfg(test)]
     fn unwrap_named(self) -> NamedTypeDef<'tn> {
         match self {
-            TypeNameDef::Named(a) => a,
+            LookupNameDef::Named(a) => a,
             _ => panic!("Cannot unwrap '{self:?}' into an NamedName"),
         }
     }
@@ -329,7 +373,7 @@ impl<'tn> TypeNameDef<'tn> {
     #[cfg(test)]
     fn unwrap_unnamed(self) -> UnnamedTypeDef<'tn> {
         match self {
-            TypeNameDef::Unnamed(a) => a,
+            LookupNameDef::Unnamed(a) => a,
             _ => panic!("Cannot unwrap '{self:?}' into an UnnamedName"),
         }
     }
@@ -337,7 +381,7 @@ impl<'tn> TypeNameDef<'tn> {
     #[cfg(test)]
     fn unwrap_array(self) -> ArrayTypeDef<'tn> {
         match self {
-            TypeNameDef::Array(a) => a,
+            LookupNameDef::Array(a) => a,
             _ => panic!("Cannot unwrap '{self:?}' into an ArrayName"),
         }
     }
@@ -348,14 +392,14 @@ impl<'tn> TypeNameDef<'tn> {
 pub struct NamedTypeDef<'tn> {
     name: &'tn str,
     params: &'tn Params,
-    handle: &'tn TypeName,
+    handle: &'tn LookupName,
     idx: usize,
 }
 
 impl<'tn> NamedTypeDef<'tn> {
-    /// Convert this back into a [`TypeName`].
-    pub fn into_type_name(self) -> TypeName {
-        TypeName {
+    /// Convert this back into a [`LookupName`].
+    pub fn into_type_name(self) -> LookupName {
+        LookupName {
             pallet: self.handle.pallet.to_owned(),
             registry: self.handle.registry.clone(),
             idx: self.idx,
@@ -368,7 +412,7 @@ impl<'tn> NamedTypeDef<'tn> {
     }
 
     /// Iterate over the type parameter definitions.
-    pub fn param_defs(&self) -> impl Iterator<Item = TypeNameDef<'tn>> {
+    pub fn param_defs(&self) -> impl Iterator<Item = LookupNameDef<'tn>> {
         self.params.iter().map(|idx| self.handle.def_at(*idx))
     }
 }
@@ -377,14 +421,14 @@ impl<'tn> NamedTypeDef<'tn> {
 #[derive(Debug, Copy, Clone)]
 pub struct UnnamedTypeDef<'tn> {
     params: &'tn Params,
-    handle: &'tn TypeName,
+    handle: &'tn LookupName,
     idx: usize,
 }
 
 impl<'tn> UnnamedTypeDef<'tn> {
-    /// Convert this back into a [`TypeName`].
-    pub fn into_type_name(self) -> TypeName {
-        TypeName {
+    /// Convert this back into a [`LookupName`].
+    pub fn into_type_name(self) -> LookupName {
+        LookupName {
             pallet: self.handle.pallet.to_owned(),
             registry: self.handle.registry.clone(),
             idx: self.idx,
@@ -392,7 +436,7 @@ impl<'tn> UnnamedTypeDef<'tn> {
     }
 
     /// Iterate over the type parameter definitions
-    pub fn param_defs(&self) -> impl ExactSizeIterator<Item = TypeNameDef<'tn>> {
+    pub fn param_defs(&self) -> impl ExactSizeIterator<Item = LookupNameDef<'tn>> {
         self.params.iter().map(|idx| self.handle.def_at(*idx))
     }
 }
@@ -402,14 +446,14 @@ impl<'tn> UnnamedTypeDef<'tn> {
 pub struct ArrayTypeDef<'tn> {
     param: usize,
     length: usize,
-    handle: &'tn TypeName,
+    handle: &'tn LookupName,
     idx: usize,
 }
 
 impl<'tn> ArrayTypeDef<'tn> {
-    /// Convert this back into a [`TypeName`].
-    pub fn into_type_name(self) -> TypeName {
-        TypeName {
+    /// Convert this back into a [`LookupName`].
+    pub fn into_type_name(self) -> LookupName {
+        LookupName {
             pallet: self.handle.pallet.to_owned(),
             registry: self.handle.registry.clone(),
             idx: self.idx,
@@ -421,19 +465,19 @@ impl<'tn> ArrayTypeDef<'tn> {
         self.length
     }
     /// The array type parameter.
-    pub fn param_def(&self) -> TypeNameDef<'tn> {
+    pub fn param_def(&self) -> LookupNameDef<'tn> {
         self.handle.def_at(self.param)
     }
 }
 
 // Internal types used:
-type Registry = SmallVec<[TypeNameInner; 2]>;
+type Registry = SmallVec<[LookupNameInner; 2]>;
 type Params = SmallVec<[usize; 2]>;
 type NameStr = SmallString<[u8; 16]>;
 
 /// The internal representation of some type name.
 #[derive(Clone, Debug, PartialEq)]
-pub enum TypeNameInner {
+pub enum LookupNameInner {
     /// Types like `Vec<T>`, `Foo` and `path::to::Bar<A,B>`, `i32`, `bool`
     /// etc are _named_ types.
     Named {
@@ -461,7 +505,7 @@ mod parser {
     use super::*;
     use yap::{types::StrTokens, TokenLocation, Tokens};
 
-    /// An error that can be emitted as the result of trying to parse a string into a [`TypeName`].
+    /// An error that can be emitted as the result of trying to parse a string into a [`LookupName`].
     #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
     #[display(fmt = "Error parsing string into type name at character {loc}: {err}")]
     pub struct ParseError {
@@ -481,7 +525,7 @@ mod parser {
         }
     }
 
-    /// The kind of error that happened attempting to parse a string into a [`TypeName`].
+    /// The kind of error that happened attempting to parse a string into a [`LookupName`].
     #[allow(missing_docs)]
     #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
     pub enum ParseErrorKind {
@@ -532,7 +576,7 @@ mod parser {
         skip_whitespace(input);
         if !input.token('<') {
             // No generics; just add the name to the registry
-            registry.push(TypeNameInner::Named {
+            registry.push(LookupNameInner::Named {
                 name: NameStr::from_str(name),
                 params: Params::new(),
             });
@@ -548,7 +592,7 @@ mod parser {
             let loc = input.location().offset();
             Some(Err(ParseError::new_at(ParseErrorKind::ClosingAngleBracketMissing, loc)))
         } else {
-            registry.push(TypeNameInner::Named { name: NameStr::from_str(name), params });
+            registry.push(LookupNameInner::Named { name: NameStr::from_str(name), params });
             Some(Ok(()))
         }
     }
@@ -571,7 +615,7 @@ mod parser {
             let loc = input.location().offset();
             Some(Err(ParseError::new_at(ParseErrorKind::ClosingParenMissing, loc)))
         } else {
-            registry.push(TypeNameInner::Unnamed { params });
+            registry.push(LookupNameInner::Unnamed { params });
             Some(Ok(()))
         }
     }
@@ -608,7 +652,7 @@ mod parser {
             let loc = input.location().offset();
             Some(Err(ParseError::new_at(ParseErrorKind::ClosingSquareBracketMissing, loc)))
         } else {
-            registry.push(TypeNameInner::Array { param, length });
+            registry.push(LookupNameInner::Array { param, length });
             Some(Ok(()))
         }
     }
@@ -692,15 +736,15 @@ mod test {
     use alloc::vec;
     use alloc::vec::Vec;
 
-    fn expect_parse(input: &str) -> TypeName {
-        match TypeName::parse(input) {
+    fn expect_parse(input: &str) -> LookupName {
+        match LookupName::parse(input) {
             Ok(tn) => tn,
             Err(e) => panic!("parsing '{input}' failed: {e}"),
         }
     }
 
     fn expect_parse_fail(input: &str) {
-        match TypeName::parse(input) {
+        match LookupName::parse(input) {
             Ok(tn) => panic!("parsing '{input}' is expected to have failed, but got {tn:?}"),
             Err(_e) => {}
         }
@@ -759,8 +803,8 @@ mod test {
         ];
 
         for (original, find, replace_with, expected) in cases {
-            let original_ty = TypeName::parse_unwrap(original);
-            let replacement = TypeName::parse_unwrap(replace_with);
+            let original_ty = LookupName::parse(original).unwrap();
+            let replacement = LookupName::parse(replace_with).unwrap();
             let new_ty = original_ty.with_substitution(find, replacement.def());
             assert_eq!(expected, new_ty.to_string());
         }
@@ -851,7 +895,7 @@ mod test {
         ];
 
         for ty_name_str in ty_name_strs {
-            let ty_name = TypeName::parse_unwrap(ty_name_str);
+            let ty_name = LookupName::parse(ty_name_str).unwrap();
             assert_eq!(ty_name.to_string(), ty_name_str);
         }
     }
