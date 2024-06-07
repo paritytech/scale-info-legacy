@@ -689,7 +689,7 @@ mod parser {
     }
 
     // Parse the name/path of a type like `Foo`` or `a::b::Foo`.
-    fn parse_path<'a>(input: &mut StrTokens<'a>) -> Cow<'a,str> {
+    fn parse_path<'a>(input: &mut StrTokens<'a>) -> Cow<'a, str> {
         let path_str = str_slice_from(input, |toks| {
             toks.sep_by(
                 |t| {
@@ -703,7 +703,7 @@ mod parser {
                             } else if tok == '>' {
                                 counter -= 1;
                                 if counter == 0 {
-                                    return Some(())
+                                    return Some(());
                                 }
                             }
                         }
@@ -733,17 +733,17 @@ mod parser {
     // allocating and return the str as is.
     //
     // Public only so that it can be tested with our other tests.
-    pub fn normalize_whitespace(str: &str) -> Cow<'_,str> {
+    pub fn normalize_whitespace(str: &str) -> Cow<'_, str> {
         let whitespaces_to_remove = str
             .chars()
             .zip(str.chars().skip(1))
-            .filter(|(a,b)| a.is_whitespace() && b.is_whitespace())
+            .filter(|(a, b)| a.is_whitespace() && b.is_whitespace())
             .count();
 
         if whitespaces_to_remove > 0 {
             let mut string = String::with_capacity(str.len() - whitespaces_to_remove);
             let mut last_is_whitespace = false;
-            for c in str.chars(){
+            for c in str.chars() {
                 if c.is_whitespace() {
                     if !last_is_whitespace {
                         last_is_whitespace = true;
@@ -956,18 +956,19 @@ mod test {
         let cases = [
             ("<Foo as Bar>::Item<A, B>", "<Foo as Bar>::Item<A, B>", vec!["A", "B"]),
             ("<Foo \tas \n\nBar>::Item", "<Foo as Bar>::Item", vec![]),
-            ("<<Foo<Thing> \tas \n\nBar<A,B>> as Wibble>::Item", "<<Foo<Thing> as Bar<A,B>> as Wibble>::Item", vec![]),
+            (
+                "<<Foo<Thing> \tas \n\nBar<A,B>> as Wibble>::Item",
+                "<<Foo<Thing> as Bar<A,B>> as Wibble>::Item",
+                vec![],
+            ),
         ];
 
         for (actual, expected, expected_params) in cases {
-            let name = LookupName::parse(actual)
-                .expect(&format!("should be able to parse '{actual}'"));
+            let name =
+                LookupName::parse(actual).expect(&format!("should be able to parse '{actual}'"));
 
-            let actual_params: Vec<String> = name.def()
-                .unwrap_named()
-                .param_defs()
-                .map(|p| p.to_string())
-                .collect();
+            let actual_params: Vec<String> =
+                name.def().unwrap_named().param_defs().map(|p| p.to_string()).collect();
 
             assert_eq!(actual_params, expected_params);
             assert_eq!(name.to_string(), expected);
@@ -976,7 +977,7 @@ mod test {
 
     #[test]
     fn normalize_whitespace_works() {
-        let cases: [(&str, Cow<'_,str>); 3] = [
+        let cases: [(&str, Cow<'_, str>); 3] = [
             ("hello there", Cow::Borrowed("hello there")),
             ("hello  there", Cow::Owned("hello there".to_string())),
             ("a \n\tb c\n\nd", Cow::Owned("a b c d".to_string())),

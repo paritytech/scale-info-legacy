@@ -105,7 +105,10 @@ impl<'a> TypeRegistrySet<'a> {
     /// and a `visitor` which will be called in order to describe how to decode it.
     /// This just creates a [`LookupName`] under the hood and uses that to resolve the
     /// type.
-    pub fn resolve_type_str<'this, V: scale_type_resolver::ResolvedTypeVisitor<'this, TypeId = LookupName>>(
+    pub fn resolve_type_str<
+        'this,
+        V: scale_type_resolver::ResolvedTypeVisitor<'this, TypeId = LookupName>,
+    >(
         &'this self,
         type_name_str: &str,
         visitor: V,
