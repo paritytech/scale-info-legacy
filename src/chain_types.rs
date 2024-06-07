@@ -339,7 +339,7 @@ impl<'de> serde::Deserialize<'de> for DeserializableEnum {
                     map.next_entry::<String, DeserializableEnumFields>()?
                 {
                     variants.push(Variant { index, name, fields: value.0 });
-                    index += 1;
+                    index = index.saturating_add(1);
                 }
                 Ok(DeserializableEnum(variants))
             }
@@ -358,7 +358,7 @@ impl<'de> serde::Deserialize<'de> for DeserializableEnum {
                         DeserializableEnumSeq::Explicit(variant) => variant,
                     };
                     variants.push(variant);
-                    index += 1;
+                    index = index.saturating_add(1);
                 }
                 Ok(DeserializableEnum(variants))
             }
