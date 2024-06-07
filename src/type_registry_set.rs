@@ -21,7 +21,7 @@
 use crate::type_registry::{TypeRegistryResolveError, TypeRegistryResolveWithParentError};
 use crate::{LookupName, TypeRegistry};
 use alloc::borrow::Cow;
-use alloc::vec::Vec;
+use alloc::collections::VecDeque;
 use scale_type_resolver::TypeResolver;
 
 /// This can be constructed from an iterator of [`crate::TypeRegistry`]s. When resolving types
@@ -29,8 +29,9 @@ use scale_type_resolver::TypeResolver;
 /// registries as a stack, looking in the last provided registry first and then working back
 /// through them until it can find the type, failing with an error if none of the registries
 /// contain an answer.
+#[derive(Debug)]
 pub struct TypeRegistrySet<'a> {
-    registries: Vec<Cow<'a, TypeRegistry>>,
+    registries: VecDeque<Cow<'a, TypeRegistry>>,
 }
 
 impl<'a> TypeRegistrySet<'a> {
@@ -39,6 +40,18 @@ impl<'a> TypeRegistrySet<'a> {
     pub fn to_owned(self) -> TypeRegistrySet<'static> {
         let registries = self.registries.into_iter().map(|r| Cow::Owned(r.into_owned())).collect();
         TypeRegistrySet { registries }
+    }
+
+    /// Add some types to the beginning of the set of registries. These types will be
+    /// checked after all of the others.
+    pub fn prepend(&mut self, types: impl Into<Cow<'a, TypeRegistry>>) {
+        self.registries.push_front(types.into());
+    }
+
+    /// Add some types to the end of the set of registries. These types will be
+    /// checked before all of the others.
+    pub fn append(&mut self, types: impl Into<Cow<'a, TypeRegistry>>) {
+        self.registries.push_back(types.into());
     }
 
     /// Resolve some type information by providing a [`LookupName`], which is the concrete name of
@@ -86,6 +99,21 @@ impl<'a> TypeRegistrySet<'a> {
 
         // We couldn't find the type, so call the "not found" method on the visitor.
         Ok(visitor.visit_not_found())
+    }
+
+    /// Resolve some type information by providing the string name of the type,
+    /// and a `visitor` which will be called in order to describe how to decode it.
+    /// This just creates a [`LookupName`] under the hood and uses that to resolve the
+    /// type.
+    pub fn resolve_type_str<'this, V: scale_type_resolver::ResolvedTypeVisitor<'this, TypeId = LookupName>>(
+        &'this self,
+        type_name_str: &str,
+        visitor: V,
+    ) -> Result<V::Value, TypeRegistryResolveError> {
+        let type_id = LookupName::parse(type_name_str).map_err(|e| {
+            TypeRegistryResolveError::LookupNameInvalid(type_name_str.to_owned(), e)
+        })?;
+        self.resolve_type(type_id, visitor)
     }
 }
 
