@@ -52,7 +52,7 @@ impl std::error::Error for ParseError {}
 /// // will be resolved during lookup:
 /// InsertName::parse("Bar<A,B>").unwrap();
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct InsertName {
     pub(crate) name: String,
     pub(crate) params: SmallVec<[String; 4]>,
@@ -120,6 +120,12 @@ impl core::convert::TryFrom<String> for InsertName {
     type Error = ParseError;
     fn try_from(s: String) -> Result<Self, Self::Error> {
         Self::parse(&s)
+    }
+}
+
+impl core::fmt::Debug for InsertName {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self)
     }
 }
 
