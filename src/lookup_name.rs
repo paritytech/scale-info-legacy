@@ -970,8 +970,8 @@ mod test {
         ];
 
         for (actual, expected, expected_params) in cases {
-            let name =
-                LookupName::parse(actual).expect(&format!("should be able to parse '{actual}'"));
+            let name = LookupName::parse(actual)
+                .unwrap_or_else(|_| panic!("should be able to parse '{actual}'"));
 
             let actual_params: Vec<String> =
                 name.def().unwrap_named().param_defs().map(|p| p.to_string()).collect();

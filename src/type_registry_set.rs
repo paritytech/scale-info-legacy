@@ -113,9 +113,8 @@ impl<'a> TypeRegistrySet<'a> {
         type_name_str: &str,
         visitor: V,
     ) -> Result<V::Value, TypeRegistryResolveError> {
-        let type_id = LookupName::parse(type_name_str).map_err(|e| {
-            TypeRegistryResolveError::LookupNameInvalid(type_name_str.to_owned(), e)
-        })?;
+        let type_id = LookupName::parse(type_name_str)
+            .map_err(|e| TypeRegistryResolveError::LookupNameInvalid(type_name_str.into(), e))?;
         self.resolve_type(type_id, visitor)
     }
 }
