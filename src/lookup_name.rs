@@ -42,7 +42,7 @@ pub use parser::{ParseError, ParseErrorKind};
 /// let array = LookupName::parse("[u8; 32]").unwrap();
 /// let tuple = LookupName::parse("(bool, u32, Vec<String>)").unwrap();
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct LookupName {
     registry: Registry,
     idx: usize,
@@ -68,6 +68,12 @@ impl PartialEq for LookupName {
     fn eq(&self, other: &Self) -> bool {
         // Bit of a hack, but it does the trick:
         self.to_string() == other.to_string()
+    }
+}
+
+impl core::fmt::Debug for LookupName {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.def())
     }
 }
 
