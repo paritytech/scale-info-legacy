@@ -583,7 +583,7 @@ mod parser {
         if !input.token('<') {
             // No generics; just add the name to the registry
             registry.push(LookupNameInner::Named {
-                name: NameStr::from_str(name),
+                name: NameStr::from_str(&name),
                 params: Params::new(),
             });
             return Some(Ok(()));
@@ -598,7 +598,7 @@ mod parser {
             let loc = input.location().offset();
             Some(Err(ParseError::new_at(ParseErrorKind::ClosingAngleBracketMissing, loc)))
         } else {
-            registry.push(LookupNameInner::Named { name: NameStr::from_str(name), params });
+            registry.push(LookupNameInner::Named { name: NameStr::from_str(&name), params });
             Some(Ok(()))
         }
     }
@@ -695,10 +695,26 @@ mod parser {
     }
 
     // Parse the name/path of a type like `Foo`` or `a::b::Foo`.
-    fn parse_path<'a>(input: &mut StrTokens<'a>) -> &'a str {
-        str_slice_from(input, |toks| {
+    fn parse_path<'a>(input: &mut StrTokens<'a>) -> Cow<'a, str> {
+        let path_str = str_slice_from(input, |toks| {
             toks.sep_by(
                 |t| {
+                    // Handle paths like the '<Foo as Bar>' in <Foo as Bar>::Name.
+                    // We just count <'s and >'s and allow anything inside right now.
+                    if t.peek()? == '<' {
+                        let mut counter = 0;
+                        while let Some(tok) = t.next() {
+                            if tok == '<' {
+                                counter += 1;
+                            } else if tok == '>' {
+                                counter -= 1;
+                                if counter == 0 {
+                                    return Some(());
+                                }
+                            }
+                        }
+                    }
+
                     // First char should exist and be a letter.
                     if !t.peek()?.is_alphabetic() {
                         return None;
@@ -713,7 +729,41 @@ mod parser {
                 },
             )
             .consume();
-        })
+        });
+
+        normalize_whitespace(path_str)
+    }
+
+    // If we see more than one whitespace character next to each other, we remove any excess
+    // whitespace and normalize any whitespace to a single ' ' character. If we don't, we avoid
+    // allocating and return the str as is.
+    //
+    // Public only so that it can be tested with our other tests.
+    pub fn normalize_whitespace(str: &str) -> Cow<'_, str> {
+        let whitespaces_to_remove = str
+            .chars()
+            .zip(str.chars().skip(1))
+            .filter(|(a, b)| a.is_whitespace() && b.is_whitespace())
+            .count();
+
+        if whitespaces_to_remove > 0 {
+            let mut string = String::with_capacity(str.len() - whitespaces_to_remove);
+            let mut last_is_whitespace = false;
+            for c in str.chars() {
+                if c.is_whitespace() {
+                    if !last_is_whitespace {
+                        last_is_whitespace = true;
+                        string.push(' ');
+                    }
+                } else {
+                    last_is_whitespace = false;
+                    string.push(c);
+                }
+            }
+            Cow::Owned(string)
+        } else {
+            Cow::Borrowed(str)
+        }
     }
 
     // Skip over any whitespace, ignoring it.
@@ -765,6 +815,7 @@ mod test {
         expect_parse("(a,b,c,)");
 
         expect_parse("path::to::Foo"); // paths should work.
+        expect_parse("<Wibble as Bar<u32>>::to::Foo"); // paths should work.
         expect_parse("Foo");
         expect_parse("Foo<>");
         expect_parse("Foo<A>");
@@ -903,6 +954,43 @@ mod test {
         for ty_name_str in ty_name_strs {
             let ty_name = LookupName::parse(ty_name_str).unwrap();
             assert_eq!(ty_name.to_string(), ty_name_str);
+        }
+    }
+
+    #[test]
+    fn parsing_trait_as_type_paths_works() {
+        let cases = [
+            ("<Foo as Bar>::Item<A, B>", "<Foo as Bar>::Item<A, B>", vec!["A", "B"]),
+            ("<Foo \tas \n\nBar>::Item", "<Foo as Bar>::Item", vec![]),
+            (
+                "<<Foo<Thing> \tas \n\nBar<A,B>> as Wibble>::Item",
+                "<<Foo<Thing> as Bar<A,B>> as Wibble>::Item",
+                vec![],
+            ),
+        ];
+
+        for (actual, expected, expected_params) in cases {
+            let name = LookupName::parse(actual)
+                .unwrap_or_else(|_| panic!("should be able to parse '{actual}'"));
+
+            let actual_params: Vec<String> =
+                name.def().unwrap_named().param_defs().map(|p| p.to_string()).collect();
+
+            assert_eq!(actual_params, expected_params);
+            assert_eq!(name.to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn normalize_whitespace_works() {
+        let cases: [(&str, Cow<'_, str>); 3] = [
+            ("hello there", Cow::Borrowed("hello there")),
+            ("hello  there", Cow::Owned("hello there".to_string())),
+            ("a \n\tb c\n\nd", Cow::Owned("a b c d".to_string())),
+        ];
+
+        for (input, output) in cases {
+            assert_eq!(parser::normalize_whitespace(input), output);
         }
     }
 }
