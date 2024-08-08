@@ -38,10 +38,6 @@ pub enum TypeRegistryResolveError {
     #[display(fmt = "'{_0}' is not a valid type name: {_1}")]
     LookupNameInvalid(String, lookup_name::ParseError),
     #[display(
-        fmt = "Wrong number of params provided for {type_name}: expected {expected_params} but got {provided_params}"
-    )]
-    TypeParamsMismatch { type_name: String, expected_params: usize, provided_params: usize },
-    #[display(
         fmt = "Bitvecs must have an order type with the path bitvec::order::Msb0 or bitvec::order::Lsb0"
     )]
     UnexpectedBitOrderType,
@@ -59,7 +55,7 @@ impl std::error::Error for TypeRegistryResolveError {}
 #[allow(missing_docs)]
 #[derive(Debug, Clone, derive_more::Display)]
 pub(crate) enum TypeRegistryResolveWithParentError<Visitor> {
-    #[display(fmt = "Type '{type_name}' not found")]
+    #[display(fmt = "Type '{type_name}' not found (either the name, pallet or number of generic params don't match any known types)")]
     TypeNotFound { type_name: LookupName, visitor: Visitor },
     #[display(fmt = "{_0}")]
     Other(TypeRegistryResolveError),
@@ -77,19 +73,26 @@ struct TypeInfo {
 /// Key pointing at named types we've stored.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct TypeKey {
+    // Pallet to look for this type in.
     pallet: Option<String>,
+    // Name of the type eg BalanceOf.
     name: String,
+    // How many generic params are expected? This allows us to
+    // have types with same name but different number of params
+    // (eg BalanceOf<T> and BalanceOf<T,I>).
+    generic_params: u8,
 }
 
 impl core::hash::Hash for TypeKey {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        hash_key(self.pallet.as_deref(), &self.name, state);
+        hash_key(self.pallet.as_deref(), &self.name, self.generic_params, state);
     }
 }
 
-fn hash_key<H: core::hash::Hasher>(pallet: Option<&str>, name: &str, state: &mut H) {
+fn hash_key<H: core::hash::Hasher>(pallet: Option<&str>, name: &str, generic_params: u8, state: &mut H) {
     pallet.hash(state);
     name.hash(state);
+    generic_params.hash(state);
 }
 
 /// A type registry that stores a mapping from type names to a description of how to SCALE
@@ -217,6 +220,10 @@ impl TypeRegistry {
 
     /// Insert a new type into the registry.
     ///
+    /// # Panics
+    ///
+    /// Panics if the type being inserted has more than 255 generic parameters.
+    ///
     /// # Example
     ///
     /// ```rust
@@ -233,8 +240,12 @@ impl TypeRegistry {
     /// registry.insert(scoped_insert_name, TypeShape::SequenceOf(LookupName::parse("T").unwrap()));
     /// ```
     pub fn insert(&mut self, name: InsertName, shape: TypeShape) {
+        let generic_params = name.params
+            .len()
+            .try_into()
+            .expect("Expecting between 0 and 255 generic params");
         self.types.insert(
-            TypeKey { pallet: name.pallet, name: name.name },
+            TypeKey { pallet: name.pallet, name: name.name, generic_params },
             TypeInfo { desc: shape, params: name.params },
         );
     }
@@ -265,8 +276,12 @@ impl TypeRegistry {
         shape: TypeShape,
     ) -> Result<(), insert_name::ParseError> {
         let name = InsertName::parse(name)?;
+        let generic_params = name.params
+            .len()
+            .try_into()
+            .expect("Expecting between 0 and 255 generic params");
         self.types.insert(
-            TypeKey { pallet: name.pallet, name: name.name },
+            TypeKey { pallet: name.pallet, name: name.name, generic_params },
             TypeInfo { desc: shape, params: name.params },
         );
         Ok(())
@@ -349,27 +364,14 @@ impl TypeRegistry {
 
         match type_id.def() {
             LookupNameDef::Named(ty) => {
-                let Some((ty_key, type_info)) = lookup(pallet, ty.name(), &self.types) else {
+                // Types are uniquely hashed by name, pallet and number of generic params.
+                let generic_params: u8 = ty.param_defs().count().try_into().expect("Expecting 0-255 generic params");
+                let Some((ty_key, type_info)) = lookup(pallet, ty.name(), generic_params, &self.types) else {
                     return Err(TypeRegistryResolveWithParentError::TypeNotFound {
                         type_name: type_id,
                         visitor,
                     });
                 };
-
-                let num_input_params = ty.param_defs().count();
-                let num_expected_params = type_info.params.len();
-
-                // Complain if you try asking for a type and don't provide the expected number
-                // of parameters in place of that types generics.
-                if num_input_params != num_expected_params {
-                    return Err(TypeRegistryResolveWithParentError::Other(
-                        TypeRegistryResolveError::TypeParamsMismatch {
-                            type_name: ty.name().to_owned(),
-                            expected_params: num_expected_params,
-                            provided_params: num_input_params,
-                        },
-                    ));
-                }
 
                 // Build a mapping from generic ident to the concrete type def we've been given.
                 // We use this to update generic type names like Vec<T> into concrete ones that the
@@ -567,13 +569,14 @@ impl core::iter::FromIterator<(InsertName, TypeShape)> for TypeRegistry {
 fn lookup<'map>(
     pallet: Option<&str>,
     name: &str,
+    generic_params: u8,
     map: &'map HashMap<TypeKey, TypeInfo>,
 ) -> Option<(&'map TypeKey, &'map TypeInfo)> {
-    // Manually construct the key hash; pallet first and then name due to struct order.
+    // Manually construct the key hash; pallet first and then name and then generic_params due to struct order.
     let hash = {
         use core::hash::{BuildHasher, Hasher};
         let mut state = map.hasher().build_hasher();
-        hash_key(pallet, name, &mut state);
+        hash_key(pallet, name, generic_params, &mut state);
         state.finish()
     };
 
