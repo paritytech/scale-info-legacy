@@ -4,6 +4,10 @@ The format is based on [Keep a Changelog].
 
 [Keep a Changelog]: http://keepachangelog.com/en/1.0.0/
 
+## 0.2.0 (2024-08-08)
+
+- Allow types to be declared with the same name but different numbers of generic parameters (ie `BalanceOf<T>` and `BalanceOf<T,I>`). See [#9](https://github.com/paritytech/scale-info-legacy/pull/9). This is a breaking change because it removes an error variant related to generic parameter mismatch.
+
 ## 0.1.1 (2024-07-26)
 
 - Support parsing trait as type paths like "<Foo as Trait>::Item", and allow prepending to `TypeRegistrySet`s ([#5](https://github.com/paritytech/scale-info-legacy/pull/5)).
