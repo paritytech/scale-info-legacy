@@ -55,7 +55,9 @@ impl std::error::Error for TypeRegistryResolveError {}
 #[allow(missing_docs)]
 #[derive(Debug, Clone, derive_more::Display)]
 pub(crate) enum TypeRegistryResolveWithParentError<Visitor> {
-    #[display(fmt = "Type '{type_name}' not found (either the name, pallet or number of generic params don't match any known types)")]
+    #[display(
+        fmt = "Type '{type_name}' not found (either the name, pallet or number of generic params don't match any known types)"
+    )]
     TypeNotFound { type_name: LookupName, visitor: Visitor },
     #[display(fmt = "{_0}")]
     Other(TypeRegistryResolveError),
@@ -89,7 +91,12 @@ impl core::hash::Hash for TypeKey {
     }
 }
 
-fn hash_key<H: core::hash::Hasher>(pallet: Option<&str>, name: &str, generic_params: u8, state: &mut H) {
+fn hash_key<H: core::hash::Hasher>(
+    pallet: Option<&str>,
+    name: &str,
+    generic_params: u8,
+    state: &mut H,
+) {
     pallet.hash(state);
     name.hash(state);
     generic_params.hash(state);
@@ -240,10 +247,8 @@ impl TypeRegistry {
     /// registry.insert(scoped_insert_name, TypeShape::SequenceOf(LookupName::parse("T").unwrap()));
     /// ```
     pub fn insert(&mut self, name: InsertName, shape: TypeShape) {
-        let generic_params = name.params
-            .len()
-            .try_into()
-            .expect("Expecting between 0 and 255 generic params");
+        let generic_params =
+            name.params.len().try_into().expect("Expecting between 0 and 255 generic params");
         self.types.insert(
             TypeKey { pallet: name.pallet, name: name.name, generic_params },
             TypeInfo { desc: shape, params: name.params },
@@ -276,10 +281,8 @@ impl TypeRegistry {
         shape: TypeShape,
     ) -> Result<(), insert_name::ParseError> {
         let name = InsertName::parse(name)?;
-        let generic_params = name.params
-            .len()
-            .try_into()
-            .expect("Expecting between 0 and 255 generic params");
+        let generic_params =
+            name.params.len().try_into().expect("Expecting between 0 and 255 generic params");
         self.types.insert(
             TypeKey { pallet: name.pallet, name: name.name, generic_params },
             TypeInfo { desc: shape, params: name.params },
@@ -365,8 +368,11 @@ impl TypeRegistry {
         match type_id.def() {
             LookupNameDef::Named(ty) => {
                 // Types are uniquely hashed by name, pallet and number of generic params.
-                let generic_params: u8 = ty.param_defs().count().try_into().expect("Expecting 0-255 generic params");
-                let Some((ty_key, type_info)) = lookup(pallet, ty.name(), generic_params, &self.types) else {
+                let generic_params: u8 =
+                    ty.param_defs().count().try_into().expect("Expecting 0-255 generic params");
+                let Some((ty_key, type_info)) =
+                    lookup(pallet, ty.name(), generic_params, &self.types)
+                else {
                     return Err(TypeRegistryResolveWithParentError::TypeNotFound {
                         type_name: type_id,
                         visitor,
