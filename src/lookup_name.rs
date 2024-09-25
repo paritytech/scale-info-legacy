@@ -776,7 +776,7 @@ mod parser {
     }
 
     fn strip_spaces_in_normalized_path(str: &str) -> Cow<'_, str> {
-        if str.find(":: ").is_some() || str.find(" ::").is_some() {
+        if str.contains(":: ") || str.contains(" ::") {
             let s = str.replace(":: ", "::").replace(" ::", "::");
             Cow::Owned(s)
         } else {
