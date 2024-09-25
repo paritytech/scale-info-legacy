@@ -724,8 +724,8 @@ mod parser {
                     Some(())
                 },
                 |t| {
-                    // Our separator is `::`.
-                    t.tokens("::".chars())
+                    // Our separator is `::`. Whitespace is allowed.
+                    t.surrounded_by(|t| t.tokens("::".chars()), |t| skip_whitespace(t))
                 },
             )
             .consume();
@@ -734,9 +734,18 @@ mod parser {
         normalize_whitespace(path_str)
     }
 
-    // If we see more than one whitespace character next to each other, we remove any excess
-    // whitespace and normalize any whitespace to a single ' ' character. If we don't, we avoid
-    // allocating and return the str as is.
+    // It's possible that we can see type names like this:
+    //
+    // <Foo \nas   Bar>::path ::to :: SomeType
+    //
+    // We want to normalize those typenames to be more like this:
+    //
+    // <Foo as Bar>::path::to::SomeType
+    //
+    // This is done in two steps.
+    // 1. Turn multiple whitespaces into one space (which mainly resolves
+    //    the bit in '<>'s).
+    // 2. Remove any whitespace from the part of the path after any '>'.
     //
     // Public only so that it can be tested with our other tests.
     pub fn normalize_whitespace(str: &str) -> Cow<'_, str> {
@@ -760,7 +769,16 @@ mod parser {
                     string.push(c);
                 }
             }
-            Cow::Owned(string)
+            Cow::Owned(strip_spaces_in_normalized_path(&string).into_owned())
+        } else {
+            strip_spaces_in_normalized_path(str)
+        }
+    }
+
+    fn strip_spaces_in_normalized_path(str: &str) -> Cow<'_, str> {
+        if str.find(":: ").is_some() || str.find(" ::").is_some() {
+            let s = str.replace(":: ", "::").replace(" ::", "::");
+            Cow::Owned(s)
         } else {
             Cow::Borrowed(str)
         }
@@ -816,6 +834,7 @@ mod test {
 
         expect_parse("path::to::Foo"); // paths should work.
         expect_parse("<Wibble as Bar<u32>>::to::Foo"); // paths should work.
+        expect_parse("<Wibble as Bar<u32>> ::to::\n Foo"); // paths should work with spaces in
         expect_parse("Foo");
         expect_parse("Foo<>");
         expect_parse("Foo<A>");
@@ -983,10 +1002,15 @@ mod test {
 
     #[test]
     fn normalize_whitespace_works() {
-        let cases: [(&str, Cow<'_, str>); 3] = [
+        let cases: [(&str, Cow<'_, str>); 5] = [
             ("hello there", Cow::Borrowed("hello there")),
             ("hello  there", Cow::Owned("hello there".to_string())),
-            ("a \n\tb c\n\nd", Cow::Owned("a b c d".to_string())),
+            ("T:: Something", Cow::Owned("T::Something".to_string())),
+            ("T ::Something", Cow::Owned("T::Something".to_string())),
+            (
+                "<T\t as \n\n\tfoo>:: path\n :: Something",
+                Cow::Owned("<T as foo>::path::Something".to_string()),
+            ),
         ];
 
         for (input, output) in cases {
