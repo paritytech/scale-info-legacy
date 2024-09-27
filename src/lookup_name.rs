@@ -776,15 +776,15 @@ mod parser {
             String::with_capacity(str.len() - remove_in_path_part - remove_in_trait_as_part);
 
         // Replace whitespaces in "<Trait as Bar>" section for 1 space.
-        let mut last_is_whitespace = false;
+        let mut prev_is_whitespace = false;
         for c in trait_as_part.chars() {
             if c.is_whitespace() {
-                if !last_is_whitespace {
-                    last_is_whitespace = true;
+                if !prev_is_whitespace {
+                    prev_is_whitespace = true;
                     new_s.push(' ');
                 }
             } else {
-                last_is_whitespace = false;
+                prev_is_whitespace = false;
                 new_s.push(c);
             }
         }
