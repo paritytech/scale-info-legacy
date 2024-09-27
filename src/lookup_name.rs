@@ -724,8 +724,8 @@ mod parser {
                     Some(())
                 },
                 |t| {
-                    // Our separator is `::`.
-                    t.tokens("::".chars())
+                    // Our separator is `::`. Whitespace is allowed.
+                    t.surrounded_by(|t| t.tokens("::".chars()), |t| skip_whitespace(t))
                 },
             )
             .consume();
@@ -734,36 +734,83 @@ mod parser {
         normalize_whitespace(path_str)
     }
 
-    // If we see more than one whitespace character next to each other, we remove any excess
-    // whitespace and normalize any whitespace to a single ' ' character. If we don't, we avoid
-    // allocating and return the str as is.
+    // It's possible that we can see type names like this:
+    //
+    // <Foo \nas   Bar>::path ::to :: SomeType
+    //
+    // We want to normalize those typenames to be more like this:
+    //
+    // <Foo as Bar>::path::to::SomeType
+    //
+    // This is done in two steps.
+    // 1. Turn multiple whitespaces into one space (which mainly resolves
+    //    the bit in '<>'s).
+    // 2. Remove any whitespace from the part of the path after any '>'.
     //
     // Public only so that it can be tested with our other tests.
     pub fn normalize_whitespace(str: &str) -> Cow<'_, str> {
-        let whitespaces_to_remove = str
+        // Split <Foo as Bar>::some::Path into '<Foo as Bar>' and '::some::Path'
+        let idx = idx_after_closing_angle_bracket(&mut str.chars()).unwrap_or(0);
+        let trait_as_part = &str[0..idx];
+        let path_part = &str[idx..];
+
+        // Check to see if we need to change anything..
+
+        // - We need to normalize at least 1 whitespace char to ' '.
+        let change_in_trait_as_part = trait_as_part.chars().any(|c| c.is_whitespace() && c != ' ');
+        // - We need to remove N whitespaces in the <Foo as Bar> part.
+        let remove_in_trait_as_part = trait_as_part
             .chars()
-            .zip(str.chars().skip(1))
+            .zip(trait_as_part.chars().skip(1))
             .filter(|(a, b)| a.is_whitespace() && b.is_whitespace())
             .count();
+        // - We need to remove N whitespaces in the ::path::to::Foo part.
+        let remove_in_path_part = path_part.chars().filter(|c| c.is_whitespace()).count();
 
-        if whitespaces_to_remove > 0 {
-            let mut string = String::with_capacity(str.len() - whitespaces_to_remove);
-            let mut last_is_whitespace = false;
-            for c in str.chars() {
-                if c.is_whitespace() {
-                    if !last_is_whitespace {
-                        last_is_whitespace = true;
-                        string.push(' ');
-                    }
-                } else {
-                    last_is_whitespace = false;
-                    string.push(c);
+        // If no changes to be made then return as is.
+        if remove_in_trait_as_part == 0 && remove_in_path_part == 0 && !change_in_trait_as_part {
+            return Cow::Borrowed(str);
+        }
+
+        let mut new_s =
+            String::with_capacity(str.len() - remove_in_path_part - remove_in_trait_as_part);
+
+        // Replace whitespaces in "<Trait as Bar>" section for 1 space.
+        let mut prev_is_whitespace = false;
+        for c in trait_as_part.chars() {
+            if c.is_whitespace() {
+                if !prev_is_whitespace {
+                    prev_is_whitespace = true;
+                    new_s.push(' ');
+                }
+            } else {
+                prev_is_whitespace = false;
+                new_s.push(c);
+            }
+        }
+
+        // Remove whitespaces in "foo::bar::Wibble" section.
+        path_part.chars().filter(|c| !c.is_whitespace()).for_each(|c| new_s.push(c));
+
+        Cow::Owned(new_s)
+    }
+
+    // given eg <<Foo as bar>::Wibble as Bob>::path::To, find the first index of '::path::To'.
+    fn idx_after_closing_angle_bracket(s: &mut impl Iterator<Item = char>) -> Option<usize> {
+        let mut idx = 0;
+        let mut counter = 0;
+        for tok in s {
+            idx += 1;
+            if tok == '<' {
+                counter += 1;
+            } else if tok == '>' {
+                counter -= 1;
+                if counter == 0 {
+                    return Some(idx);
                 }
             }
-            Cow::Owned(string)
-        } else {
-            Cow::Borrowed(str)
         }
+        None
     }
 
     // Skip over any whitespace, ignoring it.
@@ -816,6 +863,7 @@ mod test {
 
         expect_parse("path::to::Foo"); // paths should work.
         expect_parse("<Wibble as Bar<u32>>::to::Foo"); // paths should work.
+        expect_parse("<Wibble as Bar<u32>> ::to::\n Foo"); // paths should work with spaces in
         expect_parse("Foo");
         expect_parse("Foo<>");
         expect_parse("Foo<A>");
@@ -983,14 +1031,31 @@ mod test {
 
     #[test]
     fn normalize_whitespace_works() {
-        let cases: [(&str, Cow<'_, str>); 3] = [
-            ("hello there", Cow::Borrowed("hello there")),
-            ("hello  there", Cow::Owned("hello there".to_string())),
-            ("a \n\tb c\n\nd", Cow::Owned("a b c d".to_string())),
+        let cases = &[
+            // Remove spaces in path bit
+            ("T:: Something", Cow::Owned("T::Something".to_string())),
+            ("T ::Something", Cow::Owned("T::Something".to_string())),
+            // Remove spaces in trait bit
+            ("<Foo\n\t as \nBar>", Cow::Owned("<Foo as Bar>".to_string())),
+            // Replace but not remove spaces in trait bit
+            ("<Foo as\nBar>", Cow::Owned("<Foo as Bar>".to_string())),
+            // Some complete examples.
+            (
+                "<T\t as \n\n\tfoo>:: path\n :: Something",
+                Cow::Owned("<T as foo>::path::Something".to_string()),
+            ),
+            (
+                "<<Foo   as\tbar>::Wibble \t \nas\nBob> ::path::\nTo",
+                Cow::Owned("<<Foo as bar>::Wibble as Bob>::path::To".to_string()),
+            ),
+            (
+                "<<Foo as bar>::Wibble as Bob>::path::To",
+                Cow::Borrowed("<<Foo as bar>::Wibble as Bob>::path::To"),
+            ),
         ];
 
         for (input, output) in cases {
-            assert_eq!(parser::normalize_whitespace(input), output);
+            assert_eq!(&parser::normalize_whitespace(input), output);
         }
     }
 }

@@ -4,6 +4,10 @@ The format is based on [Keep a Changelog].
 
 [Keep a Changelog]: http://keepachangelog.com/en/1.0.0/
 
+## 0.2.1 (2024-09-25)
+
+- Normalize type names a little more, making a type like `<Foo \nas   Bar>::path ::to :: SomeType` in the metadata be normalized to `<Foo as Bar>::path::to::SomeType`, so it's easy to define such a type name for lookup.
+
 ## 0.2.0 (2024-08-08)
 
 - Allow types to be declared with the same name but different numbers of generic parameters (ie `BalanceOf<T>` and `BalanceOf<T,I>`). See [#9](https://github.com/paritytech/scale-info-legacy/pull/9). This is a breaking change because it removes an error variant related to generic parameter mismatch.
