@@ -513,7 +513,7 @@ mod parser {
 
     /// An error that can be emitted as the result of trying to parse a string into a [`LookupName`].
     #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
-    #[display(fmt = "Error parsing string into type name at character {loc}: {err}")]
+    #[display("Error parsing string into type name at character {loc}: {err}")]
     pub struct ParseError {
         /// Index into the string denoting the position of the error.
         pub loc: usize,
@@ -535,17 +535,17 @@ mod parser {
     #[allow(missing_docs)]
     #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
     pub enum ParseErrorKind {
-        #[display(fmt = "The string did not look like a type name at all.")]
+        #[display("The string did not look like a type name at all.")]
         InvalidName,
-        #[display(fmt = "A closing `)` was missing when attempting to parse a tuple type name.")]
+        #[display("A closing `)` was missing when attempting to parse a tuple type name.")]
         ClosingParenMissing,
         #[display(
-            fmt = "A closing `>` was missing when attempting to parse the generics of a named type."
+            "A closing `>` was missing when attempting to parse the generics of a named type."
         )]
         ClosingAngleBracketMissing,
-        #[display(fmt = "A closing `]` was missing when attempting to parse an array type.")]
+        #[display("A closing `]` was missing when attempting to parse an array type.")]
         ClosingSquareBracketMissing,
-        #[display(fmt = "The length of the array is invalid; expecting an unsigned integer.")]
+        #[display("The length of the array is invalid; expecting an unsigned integer.")]
         InvalidUnsignedInt,
     }
 
