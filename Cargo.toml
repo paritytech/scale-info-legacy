@@ -23,7 +23,7 @@ scale-type-resolver = { version = "0.2", default-features = false, features = ["
 smallstr = "0.3.0"
 smallvec = "1.13.1"
 yap = "0.12.0"
-hashbrown = { version = "0.14.3", features = ["serde"] }
+hashbrown = { version = "0.15.0", features = ["serde"] }
 serde = { version = "1.0.201", default-features = false, features = ["derive", "alloc"] }
 
 [dev-dependencies]
