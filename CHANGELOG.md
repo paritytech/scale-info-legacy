@@ -4,6 +4,11 @@ The format is based on [Keep a Changelog].
 
 [Keep a Changelog]: http://keepachangelog.com/en/1.0.0/
 
+## 0.2.2 (2024-10-23)
+
+- Bump derive_more from 0.99.6 to 1.0.0 ([#13](https://github.com/paritytech/scale-info-legacy/pull/13))
+- Bump hashbrown from 0.4 to 0.5 ([#14](https://github.com/paritytech/scale-info-legacy/pull/14))
+
 ## 0.2.1 (2024-09-25)
 
 - Normalize type names a little more, making a type like `<Foo \nas   Bar>::path ::to :: SomeType` in the metadata be normalized to `<Foo as Bar>::path::to::SomeType`, so it's easy to define such a type name for lookup.
