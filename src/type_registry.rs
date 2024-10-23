@@ -35,14 +35,14 @@ use smallvec::SmallVec;
 #[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub enum TypeRegistryResolveError {
-    #[display(fmt = "'{_0}' is not a valid type name: {_1}")]
+    #[display("'{_0}' is not a valid type name: {_1}")]
     LookupNameInvalid(String, lookup_name::ParseError),
     #[display(
-        fmt = "Bitvecs must have an order type with the path bitvec::order::Msb0 or bitvec::order::Lsb0"
+        "Bitvecs must have an order type with the path bitvec::order::Msb0 or bitvec::order::Lsb0"
     )]
     UnexpectedBitOrderType,
     #[display(
-        fmt = "Bitvecs must have a store type which resolves to a primitive u8, u16, u32 or u64 type."
+        "Bitvecs must have a store type which resolves to a primitive u8, u16, u32 or u64 type."
     )]
     UnexpectedBitStoreType,
 }
@@ -56,10 +56,10 @@ impl std::error::Error for TypeRegistryResolveError {}
 #[derive(Debug, Clone, derive_more::Display)]
 pub(crate) enum TypeRegistryResolveWithParentError<Visitor> {
     #[display(
-        fmt = "Type '{type_name}' not found (either the name, pallet or number of generic params don't match any known types)"
+        "Type '{type_name}' not found (either the name, pallet or number of generic params don't match any known types)"
     )]
     TypeNotFound { type_name: LookupName, visitor: Visitor },
-    #[display(fmt = "{_0}")]
+    #[display("{_0}")]
     Other(TypeRegistryResolveError),
 }
 

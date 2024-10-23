@@ -26,13 +26,11 @@ use smallvec::SmallVec;
 #[allow(missing_docs)]
 #[derive(Debug, derive_more::Display)]
 pub enum ParseError {
-    #[display(fmt = "Failed to parse the string. Expected something like 'Foo' or 'Bar<A, B>'.")]
+    #[display("Failed to parse the string. Expected something like 'Foo' or 'Bar<A, B>'.")]
     Invalid,
-    #[display(
-        fmt = "Expected the generic params to be names like 'A' or 'B', not arrays or tuples."
-    )]
+    #[display("Expected the generic params to be names like 'A' or 'B', not arrays or tuples.")]
     ExpectingNamedParam,
-    #[display(fmt = "Expected the generic params to be capitalized.")]
+    #[display("Expected the generic params to be capitalized.")]
     ExpectingUppercaseParams,
 }
 

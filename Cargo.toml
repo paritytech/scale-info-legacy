@@ -18,7 +18,7 @@ default = ["std"]
 std = []
 
 [dependencies]
-derive_more = { version = "0.99.17", default-features = false, features = ["display"] }
+derive_more = { version = "1.0.0", default-features = false, features = ["display"] }
 scale-type-resolver = { version = "0.2", default-features = false, features = ["visitor"] }
 smallstr = "0.3.0"
 smallvec = "1.13.1"
