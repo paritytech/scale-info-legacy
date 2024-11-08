@@ -512,17 +512,14 @@ mod parser {
     use yap::{types::StrTokens, TokenLocation, Tokens};
 
     /// An error that can be emitted as the result of trying to parse a string into a [`LookupName`].
-    #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
-    #[display("Error parsing string into type name at character {loc}: {err}")]
+    #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+    #[error("Error parsing string into type name at character {loc}: {err}")]
     pub struct ParseError {
         /// Index into the string denoting the position of the error.
         pub loc: usize,
         /// More information about the error.
         pub err: ParseErrorKind,
     }
-
-    #[cfg(feature = "std")]
-    impl std::error::Error for ParseError {}
 
     impl ParseError {
         /// Construct a new `ParseError` for tokens at the given location.
@@ -533,19 +530,19 @@ mod parser {
 
     /// The kind of error that happened attempting to parse a string into a [`LookupName`].
     #[allow(missing_docs)]
-    #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
+    #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
     pub enum ParseErrorKind {
-        #[display("The string did not look like a type name at all.")]
+        #[error("The string did not look like a type name at all.")]
         InvalidName,
-        #[display("A closing `)` was missing when attempting to parse a tuple type name.")]
+        #[error("A closing `)` was missing when attempting to parse a tuple type name.")]
         ClosingParenMissing,
-        #[display(
+        #[error(
             "A closing `>` was missing when attempting to parse the generics of a named type."
         )]
         ClosingAngleBracketMissing,
-        #[display("A closing `]` was missing when attempting to parse an array type.")]
+        #[error("A closing `]` was missing when attempting to parse an array type.")]
         ClosingSquareBracketMissing,
-        #[display("The length of the array is invalid; expecting an unsigned integer.")]
+        #[error("The length of the array is invalid; expecting an unsigned integer.")]
         InvalidUnsignedInt,
     }
 

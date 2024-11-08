@@ -41,7 +41,7 @@
 //! - [`scale-value`](https://github.com/paritytech/scale-value) to SCALE encode or decode from a
 //!   `Value` type (a bit like `serde_json`'s `Value` type).
 
-#![cfg_attr(not(feature = "std"), no_std)]
+#![no_std]
 #![deny(missing_docs)]
 
 extern crate alloc;

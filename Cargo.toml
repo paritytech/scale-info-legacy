@@ -14,17 +14,16 @@ keywords = ["parity", "scale", "encoding", "decoding"]
 include = ["Cargo.toml", "src/**/*.rs", "README.md", "LICENSE"]
 
 [features]
-default = ["std"]
-std = []
+default = []
 
 [dependencies]
-derive_more = { version = "1.0.0", default-features = false, features = ["display"] }
 scale-type-resolver = { version = "0.2", default-features = false, features = ["visitor"] }
 smallstr = "0.3.0"
 smallvec = "1.13.1"
 yap = "0.12.0"
 hashbrown = { version = "0.15.0", features = ["serde"] }
 serde = { version = "1.0.201", default-features = false, features = ["derive", "alloc"] }
+thiserror = { version = "2.0.0", default-features = false }
 
 [dev-dependencies]
 serde_json = { version = "1.0.117", default-features = false, features = ["alloc"] }
