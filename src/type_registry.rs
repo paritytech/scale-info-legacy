@@ -35,7 +35,7 @@ use smallvec::SmallVec;
 #[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TypeRegistryResolveError {
-    #[error("'{_0}' is not a valid type name: {_1}")]
+    #[error("'{0}' is not a valid type name: {1}")]
     LookupNameInvalid(String, lookup_name::ParseError),
     #[error(
         "Bitvecs must have an order type with the path bitvec::order::Msb0 or bitvec::order::Lsb0"
@@ -56,7 +56,7 @@ pub(crate) enum TypeRegistryResolveWithParentError<Visitor> {
         "Type '{type_name}' not found (either the name, pallet or number of generic params don't match any known types)"
     )]
     TypeNotFound { type_name: LookupName, visitor: Visitor },
-    #[error("{_0}")]
+    #[error(transparent)]
     Other(TypeRegistryResolveError),
 }
 
