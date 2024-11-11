@@ -24,18 +24,15 @@ use smallvec::SmallVec;
 
 /// An error constructing an [`InsertName`].
 #[allow(missing_docs)]
-#[derive(Debug, derive_more::Display)]
+#[derive(Debug, thiserror::Error)]
 pub enum ParseError {
-    #[display("Failed to parse the string. Expected something like 'Foo' or 'Bar<A, B>'.")]
+    #[error("Failed to parse the string. Expected something like 'Foo' or 'Bar<A, B>'.")]
     Invalid,
-    #[display("Expected the generic params to be names like 'A' or 'B', not arrays or tuples.")]
+    #[error("Expected the generic params to be names like 'A' or 'B', not arrays or tuples.")]
     ExpectingNamedParam,
-    #[display("Expected the generic params to be capitalized.")]
+    #[error("Expected the generic params to be capitalized.")]
     ExpectingUppercaseParams,
 }
-
-#[cfg(feature = "std")]
-impl std::error::Error for ParseError {}
 
 /// A name used as a key when inserting a type into a [`crate::TypeRegistry`].
 ///
