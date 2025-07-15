@@ -136,6 +136,16 @@ pub struct ChainTypeRegistry {
 }
 
 impl ChainTypeRegistry {
+    /// Create a new empty [`ChainTypeRegistry`]. This does not allocate and can be used as a placeholder
+    /// when no type information is available.
+    pub fn empty() -> Self {
+        ChainTypeRegistry {
+            basics: TypeRegistry::empty(),
+            global: TypeRegistry::empty(),
+            for_spec: Vec::new(),
+        }
+    }
+
     /// Hand back a [`TypeRegistrySet`] that is able to resolve types for the given spec version.
     pub fn for_spec_version(&self, spec_version: u64) -> TypeRegistrySet<'_> {
         let basics = core::iter::once(&self.basics);

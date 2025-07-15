@@ -4,6 +4,10 @@ The format is based on [Keep a Changelog].
 
 [Keep a Changelog]: http://keepachangelog.com/en/1.0.0/
 
+## 0.2.3 (2025-07-15)
+
+- Provide a [`ChainTypeRegistry::empty()`] function to allow an empty set of types to be used as a placeholder.
+
 ## 0.2.2 (2024-10-23)
 
 - Bump derive_more from 0.99.6 to 1.0.0 ([#13](https://github.com/paritytech/scale-info-legacy/pull/13))
