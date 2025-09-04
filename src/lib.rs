@@ -18,8 +18,9 @@
 //!
 //! The main types exposed here are as follows:
 //!
-//! - [`TypeRegistry`]: the lowest level type which one can populate with type information (via [`TypeRegistry::insert()`])
-//!   and then query to resolve some type name to the relevant information (via [`TypeRegistry::resolve_type()`]).
+//! - [`TypeRegistry`]: the lowest level type which one can populate with type information (via [`TypeRegistry::insert()`]
+//!   and [`TypeRegistry::insert_runtime_api()`]), and then query to resolve some type name to the relevant information
+//!   (via [`TypeRegistry::resolve_type()`] and [`TypeRegistry::runtime_api()`]).
 //! - [`TypeRegistrySet`]: a set of the above, which will resolve types (via [`TypeRegistrySet::resolve_type()`]) by working
 //!   through the inner type registries until it finds the relevant information (or doesn't find anything). This allows us
 //!   to combine type registries in different ways to alter how we resolve things.

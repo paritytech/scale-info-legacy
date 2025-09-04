@@ -18,10 +18,13 @@
 //! until a match is found. This allows us to compose different sets of types into a single thing
 //! which itself also implements [`scale_type_resolver::TypeResolver`].
 
-use crate::type_registry::{TypeRegistryResolveError, TypeRegistryResolveWithParentError};
+use crate::type_registry::{
+    RuntimeApi, TypeRegistryResolveError, TypeRegistryResolveWithParentError,
+};
 use crate::{LookupName, TypeRegistry};
 use alloc::borrow::Cow;
 use alloc::collections::VecDeque;
+use hashbrown::HashSet;
 use scale_type_resolver::TypeResolver;
 
 /// This can be constructed from an iterator of [`crate::TypeRegistry`]s. When resolving types
@@ -117,6 +120,36 @@ impl<'a> TypeRegistrySet<'a> {
             .map_err(|e| TypeRegistryResolveError::LookupNameInvalid(type_name_str.into(), e))?;
         self.resolve_type(type_id, visitor)
     }
+
+    /// Return a matching runtime API definition if one exists.
+    ///
+    /// This will work through the inner type registries from latest to earliest until it finds a
+    /// matching API.
+    pub fn runtime_api(&self, trait_name: &str, method_name: &str) -> Option<&RuntimeApi> {
+        for registry in self.registries.iter().rev() {
+            if let Some(api) = registry.runtime_api(trait_name, method_name) {
+                return Some(api);
+            }
+        }
+        None
+    }
+
+    /// Return an iterator of tuples of `(trait_name, method_name)` for all runtime APIs
+    /// that exist in this set of registries.
+    pub fn runtime_apis(&self) -> impl Iterator<Item = (&str, &str)> {
+        // We want to avoid returning any API more than once, so keep track of what we've seen already.
+        let mut seen = HashSet::<(&str, &str)>::new();
+
+        self.registries.iter().rev().flat_map(move |registry| registry.runtime_apis()).filter_map(
+            move |(trait_name, method_name)| {
+                if seen.insert((trait_name, method_name)) {
+                    Some((trait_name, method_name))
+                } else {
+                    None
+                }
+            },
+        )
+    }
 }
 
 impl<'a, R: Into<Cow<'a, TypeRegistry>>> core::iter::FromIterator<R> for TypeRegistrySet<'a> {
@@ -148,6 +181,7 @@ mod test {
     use crate::type_shape::Primitive;
     use crate::{InsertName, TypeShape};
     use alloc::vec;
+    use alloc::vec::Vec;
     use scale_type_resolver::{BitsOrderFormat, BitsStoreFormat};
 
     fn ln(name: &str) -> LookupName {
@@ -246,5 +280,28 @@ mod test {
         // We try to resolve the alias A, which is in the last registry to be queried.
         // This will need to backtrack to previous registries in the list to resolve.
         assert_eq!(to_resolved_info("A", &types), ResolvedTypeInfo::Primitive(Primitive::Bool));
+    }
+
+    #[test]
+    fn runtime_apis_works_avoiding_dupes() {
+        let mut a = TypeRegistry::empty();
+        a.insert_runtime_api_str("A", "a1", vec![], "bool").unwrap();
+        a.insert_runtime_api_str("A", "a2", vec![], "bool").unwrap();
+
+        let mut b = TypeRegistry::empty();
+        b.insert_runtime_api_str("A", "a2", vec![], "bool").unwrap();
+
+        let mut c = TypeRegistry::empty();
+        c.insert_runtime_api_str("B", "b1", vec![], "bool").unwrap();
+
+        // Resolving will look in c, then b, then a.
+        let types = TypeRegistrySet::from_iter([a, b, c]);
+
+        let all_apis: Vec<_> = types.runtime_apis().collect();
+        assert_eq!(all_apis, vec![("B", "b1"), ("A", "a2"), ("A", "a1")]);
+
+        assert!(types.runtime_api("A", "a1").is_some());
+        assert!(types.runtime_api("A", "a2").is_some());
+        assert!(types.runtime_api("B", "b1").is_some());
     }
 }

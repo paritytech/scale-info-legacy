@@ -89,7 +89,21 @@ use serde::de::Error;
 ///                     "_enum": ["One", "Two", "Three"]
 ///                 }
 ///             }
-///         }
+///         },
+///         // We can also define runtime APIs. For each runtime API we point to
+///         // types declared elsewhere, rather than defining any new types.
+///         "runtimeApis": {
+///             "Metadata": {
+///                 "metadata_versions": {
+///                     "inputs": [],
+///                     "output": "Vec<u32>"
+///                 },
+///                 "metadata_at_version": {
+///                     "inputs": ["u32"],
+///                     "output": "Option<Vec<u8>>"
+///                 }
+///             }
+///         },
 ///     },
 ///     // We can define types that are only relevant in a specific spec range.
 ///     // We can have overlaps here; later definitions trump earlier ones if so.
@@ -115,7 +129,15 @@ use serde::de::Error;
 ///                 "Foo": "String",
 ///                 "Tuple": ["bool", "Vec<String>"],
 ///                 "StructOf<T>": { "a": "bool", "b": "T" },
-///             }
+///             },
+///             // Runtime APIs can also be defined per spec range.
+///             "runtimeApis": {
+///                 "Core": {
+///                     "version": {
+///                         "inputs": [],
+///                         "output": "RuntimeVersion"
+///                     }
+///                 }
 ///         }
 ///     ]
 /// });
@@ -193,18 +215,33 @@ pub struct DeserializableChainTypes {
     types: HashMap<InsertName, DeserializableShape>,
     #[serde(default, rename = "palletTypes")]
     pallet_types: HashMap<String, HashMap<InsertName, DeserializableShape>>,
+    #[serde(default, rename = "runtimeApis")]
+    runtime_apis: HashMap<String, HashMap<String, DeserializableRuntimeApi>>,
 }
 
 impl DeserializableChainTypes {
     /// Convert the types that we've deserialized into a [`TypeRegistry`].
     fn into_type_registry(self) -> TypeRegistry {
         let global_types = self.types.into_iter().map(|(k, v)| (k, v.into()));
-
         let pallet_types = self.pallet_types.into_iter().flat_map(|(pallet, types)| {
             types.into_iter().map(move |(k, v)| (k.in_pallet(pallet.clone()), v.into()))
         });
 
-        TypeRegistry::from_iter(global_types.chain(pallet_types))
+        let mut registry = TypeRegistry::from_iter(global_types.chain(pallet_types));
+
+        // Insert runtime APIs:
+        for (trait_name, methods) in self.runtime_apis {
+            for (method_name, api) in methods {
+                registry.insert_runtime_api(
+                    trait_name.clone(),
+                    method_name,
+                    api.inputs,
+                    api.output,
+                );
+            }
+        }
+
+        registry
     }
 }
 
@@ -223,6 +260,13 @@ fn deserialize_spec_range<'de, D: serde::Deserializer<'de>>(
 ) -> Result<(u64, u64), D::Error> {
     let (min, max) = <(Option<u64>, Option<u64>)>::deserialize(deserializer)?;
     Ok((min.unwrap_or(u64::MIN), max.unwrap_or(u64::MAX)))
+}
+
+/// A runtime API method description.
+#[derive(serde::Deserialize)]
+struct DeserializableRuntimeApi {
+    inputs: Vec<LookupName>,
+    output: LookupName,
 }
 
 /// The shape of a type.
@@ -632,7 +676,20 @@ mod test {
                             "_enum": ["One", "Two", "Three"]
                         }
                     }
-                }
+                },
+                // Runtime APIs can be defined too which point to types defined elsewhere.
+                "runtimeApis": {
+                    "Metadata": {
+                        "metadata_versions": {
+                            "inputs": [],
+                            "output": "Vec<u32>"
+                        },
+                        "metadata_at_version": {
+                            "inputs": ["u32"],
+                            "output": "Option<Vec<u8>>"
+                        }
+                    }
+                },
             },
             // We can define types that are only relevant in a specific spec range.
             // We can have overlaps here; later definitions trump earlier ones if so.
@@ -658,7 +715,15 @@ mod test {
                         "Foo": "String",
                         "Tuple": ["bool", "Vec<String>"],
                         "StructOf<T>": { "a": "bool", "b": "T" },
-                    }
+                    },
+                    "runtimeApis": {
+                        "Metadata": {
+                            "metadata_at_version": {
+                                "inputs": ["u32"],
+                                "output": "Foo"
+                            }
+                        }
+                    },
                 }
             ]
         });
@@ -668,24 +733,33 @@ mod test {
         let resolver = tys.for_spec_version(12345);
         assert_eq!(to_resolved_info("Foo", &resolver), ResolvedTypeInfo::Primitive(Primitive::U8));
         assert_eq!(
-            to_resolved_info(
-                LookupName::parse("Balance").unwrap().in_pallet("balances"),
-                &resolver
-            ),
+            to_resolved_info(ln("Balance").in_pallet("balances"), &resolver),
             ResolvedTypeInfo::Primitive(Primitive::U64)
         );
+
+        let runtime_api =
+            resolver.runtime_api("Metadata", "metadata_at_version").expect("Can find Runtime API");
+        assert_eq!(&runtime_api.inputs, &[ln("u32")]);
+        assert_eq!(&runtime_api.output, &ln("Option<Vec<u8>>"));
 
         let resolver = tys.for_spec_version(500);
         assert_eq!(to_resolved_info("Foo", &resolver), ResolvedTypeInfo::Primitive(Primitive::U64));
         assert_eq!(
-            to_resolved_info(
-                LookupName::parse("Balance").unwrap().in_pallet("balances"),
-                &resolver
-            ),
+            to_resolved_info(ln("Balance").in_pallet("balances"), &resolver),
             ResolvedTypeInfo::Primitive(Primitive::U128)
         );
 
+        let runtime_api =
+            resolver.runtime_api("Metadata", "metadata_at_version").expect("Can find Runtime API");
+        assert_eq!(&runtime_api.inputs, &[ln("u32")]);
+        assert_eq!(&runtime_api.output, &ln("Option<Vec<u8>>"));
+
         let resolver = tys.for_spec_version(2000);
         assert_eq!(to_resolved_info("Foo", &resolver), ResolvedTypeInfo::Primitive(Primitive::Str));
+
+        let runtime_api =
+            resolver.runtime_api("Metadata", "metadata_at_version").expect("Can find Runtime API");
+        assert_eq!(&runtime_api.inputs, &[ln("u32")]);
+        assert_eq!(&runtime_api.output, &ln("Foo"));
     }
 }
