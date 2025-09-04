@@ -138,6 +138,7 @@ use serde::de::Error;
 ///                         "output": "RuntimeVersion"
 ///                     }
 ///                 }
+///             }
 ///         }
 ///     ]
 /// });
