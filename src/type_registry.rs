@@ -22,6 +22,7 @@ use crate::type_shape::{self, Primitive, TypeShape, VariantDesc};
 use alloc::borrow::ToOwned;
 use alloc::string::String;
 use alloc::vec;
+use alloc::vec::Vec;
 use core::hash::Hash;
 use core::iter::ExactSizeIterator;
 use core::str::FromStr;
@@ -113,6 +114,49 @@ pub struct TypeRegistry {
     /// of the shape of the type (which may involve generic params or just be
     /// concrete types or aliases to other types).
     types: HashMap<TypeKey, TypeInfo>,
+    /// A map of the available runtime APIs and their input/output types.
+    /// The first entry is the trait name, the next is the method name.
+    runtime_apis: HashMap<String, HashMap<String, RuntimeApi>>,
+}
+
+/// This represents a single Runtime API.
+#[derive(Debug, Clone)]
+pub struct RuntimeApi {
+    /// The input arguments to the API
+    pub inputs: Vec<RuntimeApiInput>,
+    /// The output type returned from the API.
+    pub output: LookupName,
+}
+
+/// A single input argument to a Runtime API call.   
+#[derive(Debug, Clone)]
+#[cfg_attr(test, derive(PartialEq))]
+pub struct RuntimeApiInput {
+    /// The name of this runtime API input.
+    pub name: String,
+    /// The type of this runtime API input.
+    pub id: LookupName,
+}
+
+impl From<LookupName> for RuntimeApiInput {
+    fn from(id: LookupName) -> Self {
+        RuntimeApiInput { name: String::new(), id }
+    }
+}
+impl TryFrom<&str> for RuntimeApiInput {
+    type Error = lookup_name::ParseError;
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let id = LookupName::parse(value)?;
+        Ok(id.into())
+    }
+}
+impl<S: Into<String>, L: TryInto<LookupName>> TryFrom<(S, L)> for RuntimeApiInput {
+    type Error = L::Error;
+    fn try_from((name, id): (S, L)) -> Result<Self, Self::Error> {
+        let id = id.try_into()?;
+        let name = name.into();
+        Ok(RuntimeApiInput { id, name })
+    }
 }
 
 impl TypeRegistry {
@@ -120,7 +164,7 @@ impl TypeRegistry {
     /// start with [`TypeRegistry::basic()`] to get a registry pre-populated with built in
     /// rust types.
     pub fn empty() -> Self {
-        TypeRegistry { types: HashMap::new() }
+        TypeRegistry { types: HashMap::new(), runtime_apis: HashMap::new() }
     }
 
     /// Create a new [`TypeRegistry`] that's pre-populated with built-in rust types.
@@ -323,7 +367,7 @@ impl TypeRegistry {
                     // if the lookup was pallet scoped, try again without any pallet scope
                     // to see if we do any better that way!
                     type_name.take_pallet();
-                    return self.resolve_type(type_name, visitor);
+                    self.resolve_type(type_name, visitor)
                 } else {
                     // else, follow our rules and call the `visit_not_found` function because
                     // we couldn't find any matches.
@@ -334,10 +378,166 @@ impl TypeRegistry {
         }
     }
 
+    /// Resolve some type information by providing the string name of the type,
+    /// and a `visitor` which will be called in order to describe how to decode it.
+    /// This just creates a [`LookupName`] under the hood and uses that to resolve the
+    /// type.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use scale_info_legacy::{ TypeRegistry, TypeShape };
+    /// use scale_type_resolver::visitor;
+    ///
+    /// // Provide a dumb visitor (ie set of callbacks) to tell us about the type that
+    /// // we query. Here, all we do is return true if the type is a sequence and
+    /// // false otherwise.
+    /// let my_visitor = visitor::new((), |_, _| false)
+    ///     .visit_sequence(|_, _, _| true);
+    ///
+    /// // Query the string name in our registry, passing our visitor:
+    /// let mut registry = TypeRegistry::basic();
+    /// let is_sequence = registry.resolve_type_str("Vec<(bool, u32)>", my_visitor).unwrap();
+    ///
+    /// assert!(is_sequence);
+    /// ```
+    pub fn resolve_type_str<'this, V: ResolvedTypeVisitor<'this, TypeId = LookupName>>(
+        &'this self,
+        type_name_str: &str,
+        visitor: V,
+    ) -> Result<V::Value, TypeRegistryResolveError> {
+        let type_id = LookupName::parse(type_name_str).map_err(|e| {
+            TypeRegistryResolveError::LookupNameInvalid(type_name_str.to_owned(), e)
+        })?;
+        self.resolve_type(type_id, visitor)
+    }
+
+    /// Insert a new Runtime API definition into the registry. We use [`LookupName`]
+    /// rather than [`InsertName`] here because we are not defining any new types,
+    /// simply pointing to types which need adding separately via [`Self::insert()`].
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use scale_info_legacy::{ TypeRegistry, LookupName, RuntimeApiInput };
+    ///
+    /// let mut registry = TypeRegistry::empty();
+    /// registry.insert_runtime_api(
+    ///     "Metadata",
+    ///     "metadata_versions",
+    ///     vec![],
+    ///     LookupName::parse("Vec<u32>").unwrap(),
+    /// );
+    /// registry.insert_runtime_api(
+    ///     "Metadata",
+    ///     "metadata_at_version",
+    ///     vec![RuntimeApiInput { name: "version".into(), id: LookupName::parse("u32").unwrap() }],
+    ///     LookupName::parse("Option<Vec<u8>>").unwrap(),
+    /// );
+    /// ```
+    pub fn insert_runtime_api(
+        &mut self,
+        trait_name: impl Into<String>,
+        method_name: impl Into<String>,
+        inputs: Vec<RuntimeApiInput>,
+        output: LookupName,
+    ) {
+        self.runtime_apis
+            .entry(trait_name.into())
+            .or_default()
+            .insert(method_name.into(), RuntimeApi { inputs, output });
+    }
+
+    /// This method is like [`Self::insert_runtime_api()`], but is more forgiving
+    /// in terms of the arguments it accepts, allowing for easier usage at the cost of
+    /// potential errors if invalid values are provided.
+    ///
+    /// If there are no inputs to the Runtime API, [`Self::try_insert_runtime_api_without_inputs`]
+    /// can be used instead to avoid type inference issues.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use scale_info_legacy::{ TypeRegistry, LookupName };
+    ///
+    /// let mut registry = TypeRegistry::empty();
+    /// registry.try_insert_runtime_api(
+    ///     "Metadata",
+    ///     "metadata_at_version",
+    ///     ["u32"],
+    ///     "Option<Vec<u8>>",
+    /// );
+    /// ```
+    pub fn try_insert_runtime_api<I, O>(
+        &mut self,
+        trait_name: impl Into<String>,
+        method_name: impl Into<String>,
+        inputs: impl IntoIterator<Item = I>,
+        output: O,
+    ) -> Result<(), O::Error>
+    where
+        I: TryInto<RuntimeApiInput, Error = O::Error>,
+        O: TryInto<LookupName>,
+    {
+        let inputs = inputs.into_iter().map(TryInto::try_into).collect::<Result<Vec<_>, _>>()?;
+        let output = output.try_into()?;
+        self.insert_runtime_api(trait_name, method_name, inputs, output);
+        Ok(())
+    }
+
+    /// This is like [`Self::try_insert_runtime_api`], but is a shorthand for inserting
+    /// APIs which do not have any input arguments. This exists because type inference can
+    /// be tricky using [`Self::try_insert_runtime_api`] and providing no inputs.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use scale_info_legacy::{ TypeRegistry, LookupName };
+    ///
+    /// let mut registry = TypeRegistry::empty();
+    /// registry.try_insert_runtime_api_without_inputs(
+    ///     "Metadata",
+    ///     "metadata_versions",
+    ///     "Vec<u32>",
+    /// );
+    /// ```
+    pub fn try_insert_runtime_api_without_inputs<O>(
+        &mut self,
+        trait_name: impl Into<String>,
+        method_name: impl Into<String>,
+        output: O,
+    ) -> Result<(), O::Error>
+    where
+        O: TryInto<LookupName>,
+    {
+        let output = output.try_into()?;
+        self.insert_runtime_api(trait_name, method_name, vec![], output);
+        Ok(())
+    }
+
+    /// Return a matching runtime API definition if one exists.
+    pub fn runtime_api(&self, trait_name: &str, method_name: &str) -> Option<&RuntimeApi> {
+        self.runtime_apis.get(trait_name)?.get(method_name)
+    }
+
+    /// Return an iterator of tuples of `(trait_name, method_name)` for all runtime APIs
+    /// that exist in this registry.
+    pub fn runtime_apis(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.runtime_apis
+            .iter()
+            .flat_map(|(k, v)| v.keys().map(move |method_name| (k.as_str(), &**method_name)))
+    }
+
     /// Extend this type registry with the one provided. In case of any matches, the provided types
-    /// will overwrite the existing ones.
+    /// and runtime API methods will overwrite the existing ones.
     pub fn extend(&mut self, other: TypeRegistry) {
         self.types.extend(other.types);
+
+        // Merge at the trait level, but overwrite at the method level in case of duplicates:
+        for (trait_name, methods) in other.runtime_apis {
+            let current_methods = self.runtime_apis.entry(trait_name).or_default();
+            current_methods.extend(methods);
+        }
     }
 
     /// Like [`TypeRegistry::resolve_type()`], but:
@@ -492,40 +692,6 @@ impl TypeRegistry {
                 Ok(visitor.visit_array(type_id, len))
             }
         }
-    }
-
-    /// Resolve some type information by providing the string name of the type,
-    /// and a `visitor` which will be called in order to describe how to decode it.
-    /// This just creates a [`LookupName`] under the hood and uses that to resolve the
-    /// type.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use scale_info_legacy::{ TypeRegistry, TypeShape };
-    /// use scale_type_resolver::visitor;
-    ///
-    /// // Provide a dumb visitor (ie set of callbacks) to tell us about the type that
-    /// // we query. Here, all we do is return true if the type is a sequence and
-    /// // false otherwise.
-    /// let my_visitor = visitor::new((), |_, _| false)
-    ///     .visit_sequence(|_, _, _| true);
-    ///
-    /// // Query the string name in our registry, passing our visitor:
-    /// let mut registry = TypeRegistry::basic();
-    /// let is_sequence = registry.resolve_type_str("Vec<(bool, u32)>", my_visitor).unwrap();
-    ///
-    /// assert!(is_sequence);
-    /// ```
-    pub fn resolve_type_str<'this, V: ResolvedTypeVisitor<'this, TypeId = LookupName>>(
-        &'this self,
-        type_name_str: &str,
-        visitor: V,
-    ) -> Result<V::Value, TypeRegistryResolveError> {
-        let type_id = LookupName::parse(type_name_str).map_err(|e| {
-            TypeRegistryResolveError::LookupNameInvalid(type_name_str.to_owned(), e)
-        })?;
-        self.resolve_type(type_id, visitor)
     }
 }
 
@@ -880,5 +1046,48 @@ mod test {
             let actual = to_resolved_info(scoped_name, &types);
             assert_eq!(expected, actual, "error with type name {input}");
         }
+    }
+
+    #[test]
+    fn test_runtime_apis() {
+        let mut types = TypeRegistry::empty();
+
+        types
+            .try_insert_runtime_api(
+                "Foo",
+                "methodname",
+                [("version", "u32"), ("id", "AccountId32")],
+                "bool",
+            )
+            .unwrap();
+
+        types
+            .try_insert_runtime_api(
+                "Bar",
+                "other",
+                [("arg", LookupName::parse("Wibble").unwrap())],
+                LookupName::parse("u64").unwrap(),
+            )
+            .unwrap();
+
+        let foo = types.runtime_api("Foo", "methodname").unwrap();
+        assert_eq!(
+            &foo.inputs,
+            &[
+                RuntimeApiInput { name: "version".into(), id: LookupName::parse("u32").unwrap() },
+                RuntimeApiInput {
+                    name: "id".into(),
+                    id: LookupName::parse("AccountId32").unwrap()
+                }
+            ]
+        );
+        assert_eq!(&foo.output, &LookupName::parse("bool").unwrap());
+
+        let bar = types.runtime_api("Bar", "other").unwrap();
+        assert_eq!(
+            &bar.inputs,
+            &[RuntimeApiInput { name: "arg".into(), id: LookupName::parse("Wibble").unwrap() },]
+        );
+        assert_eq!(&bar.output, &LookupName::parse("u64").unwrap());
     }
 }
