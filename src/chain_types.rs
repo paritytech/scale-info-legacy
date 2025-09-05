@@ -19,7 +19,7 @@
 
 use crate::type_registry_set::TypeRegistrySet;
 use crate::type_shape::{Field, TypeShape, Variant, VariantDesc};
-use crate::{InsertName, LookupName, TypeRegistry};
+use crate::{InsertName, LookupName, RuntimeApiInput, TypeRegistry};
 use alloc::borrow::{Cow, ToOwned};
 use alloc::format;
 use alloc::string::String;
@@ -236,7 +236,7 @@ impl DeserializableChainTypes {
                 registry.insert_runtime_api(
                     trait_name.clone(),
                     method_name,
-                    api.inputs,
+                    api.inputs.inputs,
                     api.output,
                 );
             }
@@ -263,11 +263,70 @@ fn deserialize_spec_range<'de, D: serde::Deserializer<'de>>(
     Ok((min.unwrap_or(u64::MIN), max.unwrap_or(u64::MAX)))
 }
 
-/// A runtime API method description.
+/// A runtime API method description. A method has 0 or more inputs and some output type.
 #[derive(serde::Deserialize)]
 struct DeserializableRuntimeApi {
-    inputs: Vec<LookupName>,
+    inputs: DeserializableRuntimeApiInputs,
     output: LookupName,
+}
+
+/// The inputs to a runtime API, which can be either named or unnamed, either:
+///
+/// - { "name1": "TypeId1", "name2": "TypeId2" }
+/// - ["TypeId1", "TypeId2"]
+struct DeserializableRuntimeApiInputs {
+    inputs: Vec<RuntimeApiInput>,
+}
+
+impl<'de> serde::Deserialize<'de> for DeserializableRuntimeApiInputs {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct DeserializableShapeVisitor;
+        impl<'de> serde::de::Visitor<'de> for DeserializableShapeVisitor {
+            type Value = DeserializableRuntimeApiInputs;
+
+            fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+                formatter.write_str("a struct or array")
+            }
+
+            // Allow { "argument_name": "ArgumentType", "another_argument_name": "AnotherType" }.
+            // The order of elements _does_ matter here, contrary to how eg JSON objects are interpreted.
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                let mut inputs = vec![];
+                while let Some((name, id)) = map.next_entry::<String, LookupName>()? {
+                    inputs.push(RuntimeApiInput { name, id })
+                }
+                Ok(DeserializableRuntimeApiInputs { inputs })
+            }
+
+            // Allow ["ArgumentType", "AnotherType"].
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut inputs = vec![];
+                while let Some(lookup_name) = seq.next_element::<LookupName>()? {
+                    inputs.push(lookup_name.into())
+                }
+                Ok(DeserializableRuntimeApiInputs { inputs })
+            }
+
+            // 'null' values are equivalent to no inputs.
+            fn visit_unit<E>(self) -> Result<Self::Value, E>
+            where
+                E: Error,
+            {
+                Ok(DeserializableRuntimeApiInputs { inputs: vec![] })
+            }
+        }
+
+        deserializer.deserialize_any(DeserializableShapeVisitor)
+    }
 }
 
 /// The shape of a type.
@@ -681,11 +740,18 @@ mod test {
                 // Runtime APIs can be defined too which point to types defined elsewhere.
                 "runtimeApis": {
                     "Metadata": {
-                        "metadata_versions": {
-                            "inputs": [],
+                        "foo": {
+                            // Inputs can be given as named key/value args.
+                            "inputs": { "a": "u32", "b": "bool", "c": "u16" },
                             "output": "Vec<u32>"
                         },
+                        "bar": {
+                            // Inputs can be null
+                            "inputs": null,
+                            "output": "bool"
+                        },
                         "metadata_at_version": {
+                            // Inputs can be unnamed args.
                             "inputs": ["u32"],
                             "output": "Option<Vec<u8>>"
                         }
@@ -738,9 +804,27 @@ mod test {
             ResolvedTypeInfo::Primitive(Primitive::U64)
         );
 
+        // Check that named runtime API args work ok:
+        let runtime_api = resolver.runtime_api("Metadata", "foo").expect("Can find Runtime API");
+        assert_eq!(
+            &runtime_api.inputs,
+            &[
+                RuntimeApiInput { name: "a".into(), id: ln("u32") },
+                RuntimeApiInput { name: "b".into(), id: ln("bool") },
+                RuntimeApiInput { name: "c".into(), id: ln("u16") },
+            ]
+        );
+        assert_eq!(&runtime_api.output, &ln("Vec<u32>"));
+
+        // Check that null runtime API args work ok:
+        let runtime_api = resolver.runtime_api("Metadata", "bar").expect("Can find Runtime API");
+        assert_eq!(&runtime_api.inputs, &[]);
+        assert_eq!(&runtime_api.output, &ln("bool"));
+
+        // Check that unnamed runtime APi args work too:
         let runtime_api =
             resolver.runtime_api("Metadata", "metadata_at_version").expect("Can find Runtime API");
-        assert_eq!(&runtime_api.inputs, &[ln("u32")]);
+        assert_eq!(&runtime_api.inputs, &[RuntimeApiInput { name: "".into(), id: ln("u32") }]);
         assert_eq!(&runtime_api.output, &ln("Option<Vec<u8>>"));
 
         let resolver = tys.for_spec_version(500);
@@ -752,7 +836,7 @@ mod test {
 
         let runtime_api =
             resolver.runtime_api("Metadata", "metadata_at_version").expect("Can find Runtime API");
-        assert_eq!(&runtime_api.inputs, &[ln("u32")]);
+        assert_eq!(&runtime_api.inputs, &[ln("u32").into()]);
         assert_eq!(&runtime_api.output, &ln("Option<Vec<u8>>"));
 
         let resolver = tys.for_spec_version(2000);
@@ -760,7 +844,7 @@ mod test {
 
         let runtime_api =
             resolver.runtime_api("Metadata", "metadata_at_version").expect("Can find Runtime API");
-        assert_eq!(&runtime_api.inputs, &[ln("u32")]);
+        assert_eq!(&runtime_api.inputs, &[ln("u32").into()]);
         assert_eq!(&runtime_api.output, &ln("Foo"));
     }
 }

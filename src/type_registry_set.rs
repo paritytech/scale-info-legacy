@@ -285,14 +285,14 @@ mod test {
     #[test]
     fn runtime_apis_works_avoiding_dupes() {
         let mut a = TypeRegistry::empty();
-        a.insert_runtime_api_str("A", "a1", vec![], "bool").unwrap();
-        a.insert_runtime_api_str("A", "a2", vec![], "bool").unwrap();
+        a.try_insert_runtime_api_without_inputs("A", "a1", "bool").unwrap();
+        a.try_insert_runtime_api_without_inputs("A", "a2", "bool").unwrap();
 
         let mut b = TypeRegistry::empty();
-        b.insert_runtime_api_str("A", "a2", vec![], "bool").unwrap();
+        b.try_insert_runtime_api_without_inputs("A", "a2", "bool").unwrap();
 
         let mut c = TypeRegistry::empty();
-        c.insert_runtime_api_str("B", "b1", vec![], "bool").unwrap();
+        c.try_insert_runtime_api_without_inputs("B", "b1", "bool").unwrap();
 
         // Resolving will look in c, then b, then a.
         let types = TypeRegistrySet::from_iter([a, b, c]);

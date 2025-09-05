@@ -123,9 +123,40 @@ pub struct TypeRegistry {
 #[derive(Debug, Clone)]
 pub struct RuntimeApi {
     /// The input arguments to the API
-    pub inputs: Vec<LookupName>,
+    pub inputs: Vec<RuntimeApiInput>,
     /// The output type returned from the API.
     pub output: LookupName,
+}
+
+/// A single input argument to a Runtime API call.   
+#[derive(Debug, Clone)]
+#[cfg_attr(test, derive(PartialEq))]
+pub struct RuntimeApiInput {
+    /// The name of this runtime API input.
+    pub name: String,
+    /// The type of this runtime API input.
+    pub id: LookupName,
+}
+
+impl From<LookupName> for RuntimeApiInput {
+    fn from(id: LookupName) -> Self {
+        RuntimeApiInput { name: String::new(), id }
+    }
+}
+impl TryFrom<&str> for RuntimeApiInput {
+    type Error = lookup_name::ParseError;
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let id = LookupName::parse(value)?;
+        Ok(id.into())
+    }
+}
+impl<S: Into<String>, L: TryInto<LookupName>> TryFrom<(S, L)> for RuntimeApiInput {
+    type Error = L::Error;
+    fn try_from((name, id): (S, L)) -> Result<Self, Self::Error> {
+        let id = id.try_into()?;
+        let name = name.into();
+        Ok(RuntimeApiInput { id, name })
+    }
 }
 
 impl TypeRegistry {
@@ -388,7 +419,7 @@ impl TypeRegistry {
     /// # Example
     ///
     /// ```rust
-    /// use scale_info_legacy::{ TypeRegistry, LookupName };
+    /// use scale_info_legacy::{ TypeRegistry, LookupName, RuntimeApiInput };
     ///
     /// let mut registry = TypeRegistry::empty();
     /// registry.insert_runtime_api(
@@ -400,7 +431,7 @@ impl TypeRegistry {
     /// registry.insert_runtime_api(
     ///     "Metadata",
     ///     "metadata_at_version",
-    ///     vec![LookupName::parse("u32").unwrap()],
+    ///     vec![RuntimeApiInput { name: "version".into(), id: LookupName::parse("u32").unwrap() }],
     ///     LookupName::parse("Option<Vec<u8>>").unwrap(),
     /// );
     /// ```
@@ -408,7 +439,7 @@ impl TypeRegistry {
         &mut self,
         trait_name: impl Into<String>,
         method_name: impl Into<String>,
-        inputs: Vec<LookupName>,
+        inputs: Vec<RuntimeApiInput>,
         output: LookupName,
     ) {
         self.runtime_apis
@@ -417,8 +448,9 @@ impl TypeRegistry {
             .insert(method_name.into(), RuntimeApi { inputs, output });
     }
 
-    /// Like [`TypeRegistry::insert_runtime_api()`], but accepts string names for
-    /// the inputs and output, making it simpler for manual insertion of APIs.
+    /// This method is like [`Self::insert_runtime_api()`], but is more forgiving
+    /// in terms of the inputs it accepts, allowing for easier usage at the cost of
+    /// potential errors if invalid values are provided.
     ///
     /// # Example
     ///
@@ -426,29 +458,57 @@ impl TypeRegistry {
     /// use scale_info_legacy::{ TypeRegistry, LookupName };
     ///
     /// let mut registry = TypeRegistry::empty();
-    /// registry.insert_runtime_api_str(
-    ///     "Metadata",
-    ///     "metadata_versions",
-    ///     [],
-    ///     "Vec<u32>",
-    /// );
-    /// registry.insert_runtime_api_str(
+    /// registry.try_insert_runtime_api(
     ///     "Metadata",
     ///     "metadata_at_version",
     ///     ["u32"],
     ///     "Option<Vec<u8>>",
     /// );
     /// ```
-    pub fn insert_runtime_api_str<'a>(
+    pub fn try_insert_runtime_api<I, O>(
         &mut self,
         trait_name: impl Into<String>,
         method_name: impl Into<String>,
-        inputs: impl IntoIterator<Item = &'a str>,
-        output: &str,
-    ) -> Result<(), lookup_name::ParseError> {
-        let inputs = inputs.into_iter().map(LookupName::parse).collect::<Result<Vec<_>, _>>()?;
-        let output = LookupName::parse(output)?;
+        inputs: impl IntoIterator<Item = I>,
+        output: O,
+    ) -> Result<(), O::Error>
+    where
+        I: TryInto<RuntimeApiInput, Error = O::Error>,
+        O: TryInto<LookupName>,
+    {
+        let inputs = inputs.into_iter().map(TryInto::try_into).collect::<Result<Vec<_>, _>>()?;
+        let output = output.try_into()?;
         self.insert_runtime_api(trait_name, method_name, inputs, output);
+        Ok(())
+    }
+
+    /// This is like [`Self::try_insert_runtime_api`], but is a shorthand for inserting
+    /// APIs which do not have any input arguments. This exists because type inference can
+    /// be tricky using [`Self::try_insert_runtime_api`] and providing no inputs.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use scale_info_legacy::{ TypeRegistry, LookupName };
+    ///
+    /// let mut registry = TypeRegistry::empty();
+    /// registry.try_insert_runtime_api_without_inputs(
+    ///     "Metadata",
+    ///     "metadata_versions",
+    ///     "Vec<u32>",
+    /// );
+    /// ```
+    pub fn try_insert_runtime_api_without_inputs<O>(
+        &mut self,
+        trait_name: impl Into<String>,
+        method_name: impl Into<String>,
+        output: O,
+    ) -> Result<(), O::Error>
+    where
+        O: TryInto<LookupName>,
+    {
+        let output = output.try_into()?;
+        self.insert_runtime_api(trait_name, method_name, vec![], output);
         Ok(())
     }
 
@@ -983,5 +1043,48 @@ mod test {
             let actual = to_resolved_info(scoped_name, &types);
             assert_eq!(expected, actual, "error with type name {input}");
         }
+    }
+
+    #[test]
+    fn test_runtime_apis() {
+        let mut types = TypeRegistry::empty();
+
+        types
+            .try_insert_runtime_api(
+                "Foo",
+                "methodname",
+                [("version", "u32"), ("id", "AccountId32")],
+                "bool",
+            )
+            .unwrap();
+
+        types
+            .try_insert_runtime_api(
+                "Bar",
+                "other",
+                [("arg", LookupName::parse("Wibble").unwrap())],
+                LookupName::parse("u64").unwrap(),
+            )
+            .unwrap();
+
+        let foo = types.runtime_api("Foo", "methodname").unwrap();
+        assert_eq!(
+            &foo.inputs,
+            &[
+                RuntimeApiInput { name: "version".into(), id: LookupName::parse("u32").unwrap() },
+                RuntimeApiInput {
+                    name: "id".into(),
+                    id: LookupName::parse("AccountId32").unwrap()
+                }
+            ]
+        );
+        assert_eq!(&foo.output, &LookupName::parse("bool").unwrap());
+
+        let bar = types.runtime_api("Bar", "other").unwrap();
+        assert_eq!(
+            &bar.inputs,
+            &[RuntimeApiInput { name: "arg".into(), id: LookupName::parse("Wibble").unwrap() },]
+        );
+        assert_eq!(&bar.output, &LookupName::parse("u64").unwrap());
     }
 }
