@@ -449,8 +449,11 @@ impl TypeRegistry {
     }
 
     /// This method is like [`Self::insert_runtime_api()`], but is more forgiving
-    /// in terms of the inputs it accepts, allowing for easier usage at the cost of
+    /// in terms of the arguments it accepts, allowing for easier usage at the cost of
     /// potential errors if invalid values are provided.
+    ///
+    /// If there are no inputs to the Runtime API, [`Self::try_insert_runtime_api_without_inputs`]
+    /// can be used instead to avoid type inference issues.
     ///
     /// # Example
     ///
