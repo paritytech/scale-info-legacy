@@ -18,8 +18,9 @@
 //!
 //! The main types exposed here are as follows:
 //!
-//! - [`TypeRegistry`]: the lowest level type which one can populate with type information (via [`TypeRegistry::insert()`])
-//!   and then query to resolve some type name to the relevant information (via [`TypeRegistry::resolve_type()`]).
+//! - [`TypeRegistry`]: the lowest level type which one can populate with type information (via [`TypeRegistry::insert()`]
+//!   and [`TypeRegistry::insert_runtime_api()`]), and then query to resolve some type name to the relevant information
+//!   (via [`TypeRegistry::resolve_type()`] and [`TypeRegistry::runtime_api()`]).
 //! - [`TypeRegistrySet`]: a set of the above, which will resolve types (via [`TypeRegistrySet::resolve_type()`]) by working
 //!   through the inner type registries until it finds the relevant information (or doesn't find anything). This allows us
 //!   to combine type registries in different ways to alter how we resolve things.
@@ -59,5 +60,6 @@ mod test_utils;
 // Export the main types here for ease of use:
 pub use {
     chain_types::ChainTypeRegistry, insert_name::InsertName, lookup_name::LookupName,
-    type_registry::TypeRegistry, type_registry_set::TypeRegistrySet, type_shape::TypeShape,
+    type_registry::RuntimeApiInput, type_registry::TypeRegistry,
+    type_registry_set::TypeRegistrySet, type_shape::TypeShape,
 };
