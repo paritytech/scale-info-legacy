@@ -521,12 +521,6 @@ mod parser {
         pub err: ParseErrorKind,
     }
 
-    impl From<core::convert::Infallible> for ParseError {
-        fn from(e: core::convert::Infallible) -> Self {
-            match e {}
-        }
-    }
-
     impl ParseError {
         /// Construct a new `ParseError` for tokens at the given location.
         pub fn new_at<E: Into<ParseErrorKind>>(err: E, loc: usize) -> Self {
