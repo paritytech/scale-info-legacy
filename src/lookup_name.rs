@@ -16,7 +16,7 @@
 //! This module provides a struct, [`LookupName`]. This struct represents a single concrete type
 //! that can be looked up in the [`crate::TypeRegistry`].
 
-use core::cmp::Ordering;
+use core::{cmp::Ordering, hash::Hash};
 
 use alloc::{
     borrow::{Cow, ToOwned},
@@ -52,6 +52,12 @@ pub struct LookupName {
     // look at types defined within the given pallet before considering
     // any global types.
     pallet: Option<String>,
+}
+
+impl Hash for LookupName {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        LookupNameInner::hash(self.idx, &self.registry, state)
+    }
 }
 
 // We only implement this because `scale_type_resolver::TypeResolver` requires
@@ -603,6 +609,30 @@ impl LookupNameInner {
     fn eq(a_idx: usize, a_registry: &Registry, b_idx: usize, b_registry: &Registry) -> bool {
         LookupNameInner::cmp(a_idx, a_registry, b_idx, b_registry).is_eq()
     }
+
+    fn hash<H: core::hash::Hasher>(idx: usize, registry: &Registry, state: &mut H) {
+        let inner = &registry[idx];
+        match inner {
+            LookupNameInner::Array { param, length } => {
+                0u8.hash(state);
+                LookupNameInner::hash(*param, registry, state);
+                length.hash(state);
+            }
+            LookupNameInner::Named { name, params } => {
+                1u8.hash(state);
+                name.hash(state);
+                for param in params {
+                    LookupNameInner::hash(*param, registry, state);
+                }
+            }
+            LookupNameInner::Unnamed { params } => {
+                2u8.hash(state);
+                for param in params {
+                    LookupNameInner::hash(*param, registry, state);
+                }
+            }
+        }
+    }
 }
 
 // Logic for parsing strings into type names.
@@ -950,12 +980,13 @@ mod test {
     }
 
     #[test]
-    fn basic_eq_works() {
+    fn basic_eq_and_hash_works() {
         let cmps = [
             // basic named types
             (expect_parse("path::to::Foo"), expect_parse("path::to::Foo"), true),
             (expect_parse("Foo<u8>"), expect_parse("Foo<u8>"), true),
             (expect_parse("Foo<u8>"), expect_parse("Foo<bool>"), false),
+            (expect_parse("Foo<u8>"), expect_parse("Foo<u8, bool>"), false),
             (expect_parse("path::to::Foo").in_pallet("bar"), expect_parse("path::to::Foo"), false),
             (
                 expect_parse("path::to::Foo").in_pallet("bar"),
@@ -976,11 +1007,25 @@ mod test {
             (expect_parse("()"), expect_parse("()"), true),
             (expect_parse("(bool,)"), expect_parse("(bool,)"), true),
             (expect_parse("(char, u8, String)"), expect_parse("(char, u8, String)"), true),
+            (expect_parse("(char, u8, String)"), expect_parse("(char, u8, String, bool)"), false),
             (expect_parse("(u8, char, String)"), expect_parse("(char, u8, String)"), false),
         ];
 
         for (a, b, expected) in cmps {
             assert_eq!(a == b, expected, "{a} should equal {b}: {expected}");
+
+            // if the types are supposed to be equal, hashes should be equal too.
+            if expected {
+                // Easiest way to check hashes is to see if two items hash to the same
+                // location in a set. If hashes are different then locations _probably_ be too.
+                // Pre-init the HashSet with a capacity that should limit collision likelihood.
+                // We could find a deterministic hasher and just check the raw hash values which
+                // would be better but more complicated.
+                let mut set = hashbrown::HashSet::with_capacity(1024);
+                set.insert(&a);
+                set.insert(&b);
+                assert_eq!(set.len(), 1, "hash mismatch between {a} and {b}");
+            }
         }
     }
 
