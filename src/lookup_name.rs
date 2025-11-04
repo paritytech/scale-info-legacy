@@ -16,6 +16,8 @@
 //! This module provides a struct, [`LookupName`]. This struct represents a single concrete type
 //! that can be looked up in the [`crate::TypeRegistry`].
 
+use core::{cmp::Ordering, hash::Hash};
+
 use alloc::{
     borrow::{Cow, ToOwned},
     format,
@@ -52,6 +54,12 @@ pub struct LookupName {
     pallet: Option<String>,
 }
 
+impl Hash for LookupName {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        LookupNameInner::hash(self.idx, &self.registry, state)
+    }
+}
+
 // We only implement this because `scale_type_resolver::TypeResolver` requires
 // type IDs to impl Default.
 impl Default for LookupName {
@@ -63,13 +71,43 @@ impl Default for LookupName {
     }
 }
 
-#[cfg(test)]
-impl PartialEq for LookupName {
-    fn eq(&self, other: &Self) -> bool {
-        // Bit of a hack, but it does the trick:
-        self.to_string() == other.to_string()
+impl PartialOrd for LookupName {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
+
+impl Ord for LookupName {
+    fn cmp(&self, other: &Self) -> Ordering {
+        if let o @ (Ordering::Greater | Ordering::Less) = self.pallet.cmp(&other.pallet) {
+            return o;
+        }
+
+        let a_idx = self.idx;
+        let a_registry = &self.registry;
+        let b_idx = other.idx;
+        let b_registry = &other.registry;
+
+        LookupNameInner::cmp(a_idx, a_registry, b_idx, b_registry)
+    }
+}
+
+impl PartialEq for LookupName {
+    fn eq(&self, other: &Self) -> bool {
+        if self.pallet != other.pallet {
+            return false;
+        }
+
+        let a_idx = self.idx;
+        let a_registry = &self.registry;
+        let b_idx = other.idx;
+        let b_registry = &other.registry;
+
+        LookupNameInner::eq(a_idx, a_registry, b_idx, b_registry)
+    }
+}
+
+impl Eq for LookupName {}
 
 impl core::fmt::Debug for LookupName {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -482,7 +520,7 @@ type Params = SmallVec<[usize; 2]>;
 type NameStr = SmallString<[u8; 16]>;
 
 /// The internal representation of some type name.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum LookupNameInner {
     /// Types like `Vec<T>`, `Foo` and `path::to::Bar<A,B>`, `i32`, `bool`
     /// etc are _named_ types.
@@ -504,6 +542,97 @@ pub enum LookupNameInner {
         /// The fixed length of the array.
         length: usize,
     },
+}
+
+// If the orderings match, do nothing, else return the ordering.
+macro_rules! ord_eq {
+    ($a:expr) => {
+        if let o @ (Ordering::Greater | Ordering::Less) = $a {
+            return o;
+        }
+    };
+    ($a:expr, $b:expr) => {
+        if let o @ (Ordering::Greater | Ordering::Less) = $a.cmp(&$b) {
+            return o;
+        }
+    };
+}
+
+impl LookupNameInner {
+    fn cmp(
+        a_idx: usize,
+        a_registry: &Registry,
+        b_idx: usize,
+        b_registry: &Registry,
+    ) -> core::cmp::Ordering {
+        let a = &a_registry[a_idx];
+        let b = &b_registry[b_idx];
+
+        match (a, b) {
+            // Same variants; compare ordering of each field:
+            (
+                LookupNameInner::Named { name: a_name, params: a_params },
+                LookupNameInner::Named { name: b_name, params: b_params },
+            ) => {
+                ord_eq!(a_name, b_name);
+                ord_eq!(a_params.len(), b_params.len());
+
+                for (a_param, b_param) in a_params.iter().zip(b_params.iter()) {
+                    ord_eq!(LookupNameInner::cmp(*a_param, a_registry, *b_param, b_registry));
+                }
+            }
+            (
+                LookupNameInner::Unnamed { params: a_params },
+                LookupNameInner::Unnamed { params: b_params },
+            ) => {
+                ord_eq!(a_params.len(), b_params.len());
+
+                for (a_param, b_param) in a_params.iter().zip(b_params.iter()) {
+                    ord_eq!(LookupNameInner::cmp(*a_param, a_registry, *b_param, b_registry));
+                }
+            }
+            (
+                LookupNameInner::Array { param: a_param, length: a_len },
+                LookupNameInner::Array { param: b_param, length: b_len },
+            ) => {
+                ord_eq!(a_len, b_len);
+                ord_eq!(LookupNameInner::cmp(*a_param, a_registry, *b_param, b_registry));
+            }
+            // Different variants; arbitrary ordering between them:
+            (LookupNameInner::Named { .. }, _) => return Ordering::Greater,
+            (LookupNameInner::Unnamed { .. }, _) => return Ordering::Greater,
+            (LookupNameInner::Array { .. }, _) => return Ordering::Greater,
+        }
+        Ordering::Equal
+    }
+
+    fn eq(a_idx: usize, a_registry: &Registry, b_idx: usize, b_registry: &Registry) -> bool {
+        LookupNameInner::cmp(a_idx, a_registry, b_idx, b_registry).is_eq()
+    }
+
+    fn hash<H: core::hash::Hasher>(idx: usize, registry: &Registry, state: &mut H) {
+        let inner = &registry[idx];
+        match inner {
+            LookupNameInner::Array { param, length } => {
+                0u8.hash(state);
+                LookupNameInner::hash(*param, registry, state);
+                length.hash(state);
+            }
+            LookupNameInner::Named { name, params } => {
+                1u8.hash(state);
+                name.hash(state);
+                for param in params {
+                    LookupNameInner::hash(*param, registry, state);
+                }
+            }
+            LookupNameInner::Unnamed { params } => {
+                2u8.hash(state);
+                for param in params {
+                    LookupNameInner::hash(*param, registry, state);
+                }
+            }
+        }
+    }
 }
 
 // Logic for parsing strings into type names.
@@ -848,6 +977,90 @@ mod test {
             Ok(tn) => panic!("parsing '{input}' is expected to have failed, but got {tn:?}"),
             Err(_e) => {}
         }
+    }
+
+    #[test]
+    fn basic_eq_and_hash_works() {
+        let cmps = [
+            // basic named types
+            (expect_parse("path::to::Foo"), expect_parse("path::to::Foo"), true),
+            (expect_parse("Foo<u8>"), expect_parse("Foo<u8>"), true),
+            (expect_parse("Foo<u8>"), expect_parse("Foo<bool>"), false),
+            (expect_parse("Foo<u8>"), expect_parse("Foo<u8, bool>"), false),
+            (expect_parse("path::to::Foo").in_pallet("bar"), expect_parse("path::to::Foo"), false),
+            (
+                expect_parse("path::to::Foo").in_pallet("bar"),
+                expect_parse("path::to::Foo").in_pallet("bar"),
+                true,
+            ),
+            (
+                expect_parse("path::for::Foo").in_pallet("bar"),
+                expect_parse("path::to::Foo").in_pallet("bar"),
+                false,
+            ),
+            (expect_parse("path::for::Foo"), expect_parse("path::to::Foo"), false),
+            // arrays
+            (expect_parse("[u8; 32]"), expect_parse("[u8; 32]"), true),
+            (expect_parse("[u8; 32]"), expect_parse("[u8; 28]"), false),
+            (expect_parse("[u8; 32]"), expect_parse("[u16; 32]"), false),
+            // unnameds
+            (expect_parse("()"), expect_parse("()"), true),
+            (expect_parse("(bool,)"), expect_parse("(bool,)"), true),
+            (expect_parse("(char, u8, String)"), expect_parse("(char, u8, String)"), true),
+            (expect_parse("(char, u8, String)"), expect_parse("(char, u8, String, bool)"), false),
+            (expect_parse("(u8, char, String)"), expect_parse("(char, u8, String)"), false),
+        ];
+
+        for (a, b, expected) in cmps {
+            assert_eq!(a == b, expected, "{a} should equal {b}: {expected}");
+
+            // if the types are supposed to be equal, hashes should be equal too.
+            if expected {
+                // Easiest way to check hashes is to see if two items hash to the same
+                // location in a set. If hashes are different then locations _probably_ will be too.
+                // Pre-init the HashSet with a capacity that should limit collision likelihood.
+                // We could find a deterministic hasher and just check the raw hash values which
+                // would be better but more complicated.
+                let mut set = hashbrown::HashSet::with_capacity(1024);
+                set.insert(&a);
+                set.insert(&b);
+                assert_eq!(set.len(), 1, "hash mismatch between {a} and {b}");
+            }
+        }
+    }
+
+    #[test]
+    fn eq_works_with_different_registries() {
+        // These two types have differently ordered registries but
+        // are actually the same type and so should be equal.
+        let a = LookupName {
+            registry: SmallVec::from_iter([
+                LookupNameInner::Named { name: "Foo".into(), params: SmallVec::from_iter([1]) },
+                LookupNameInner::Array { param: 2, length: 32 },
+                LookupNameInner::Unnamed { params: SmallVec::from_iter([]) },
+            ]),
+            idx: 0,
+            pallet: None,
+        };
+        let b = LookupName {
+            registry: SmallVec::from_iter([
+                LookupNameInner::Array { param: 1, length: 32 },
+                LookupNameInner::Unnamed { params: SmallVec::from_iter([]) },
+                LookupNameInner::Named { name: "Foo".into(), params: SmallVec::from_iter([0]) },
+                // this type isn't referenced so should be ignored:
+                LookupNameInner::Array { param: 0, length: 128 },
+            ]),
+            idx: 2,
+            pallet: None,
+        };
+
+        assert_eq!(a, b);
+
+        // Check that these items hash the same even though they are different internally.
+        let mut set = hashbrown::HashSet::with_capacity(1024);
+        set.insert(&a);
+        set.insert(&b);
+        assert_eq!(set.len(), 1, "hash mismatch between {a} and {b}");
     }
 
     #[test]

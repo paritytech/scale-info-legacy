@@ -4,6 +4,10 @@ The format is based on [Keep a Changelog].
 
 [Keep a Changelog]: http://keepachangelog.com/en/1.0.0/
 
+## 0.2.5 (2025-11-03)
+
+- Add proper support for `PartialEq`, `Eq`, `PartialOrd`, `Ord` and `Hash` to `LookupName` (and `Ord` + `PartialOrd` to `InsertName`). This most notably allows both of these types to be used as keys in HashMaps / BTreeMaps.
+
 ## 0.2.4 (2025-10-08)
 
 - Add support for defining Runtime APIs ([#22](https://github.com/paritytech/scale-info-legacy/pull/22)). This is useful because prior to V15 metadata, we had no Runtime API information, and so we can define such APIs here instead.

@@ -47,7 +47,7 @@ pub enum ParseError {
 /// // will be resolved during lookup:
 /// InsertName::parse("Bar<A,B>").unwrap();
 /// ```
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct InsertName {
     pub(crate) name: String,
     pub(crate) params: SmallVec<[String; 4]>,
