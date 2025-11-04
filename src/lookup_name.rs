@@ -1017,7 +1017,7 @@ mod test {
             // if the types are supposed to be equal, hashes should be equal too.
             if expected {
                 // Easiest way to check hashes is to see if two items hash to the same
-                // location in a set. If hashes are different then locations _probably_ be too.
+                // location in a set. If hashes are different then locations _probably_ will be too.
                 // Pre-init the HashSet with a capacity that should limit collision likelihood.
                 // We could find a deterministic hasher and just check the raw hash values which
                 // would be better but more complicated.
@@ -1055,6 +1055,12 @@ mod test {
         };
 
         assert_eq!(a, b);
+
+        // Check that these items hash the same even though they are different internally.
+        let mut set = hashbrown::HashSet::with_capacity(1024);
+        set.insert(&a);
+        set.insert(&b);
+        assert_eq!(set.len(), 1, "hash mismatch between {a} and {b}");
     }
 
     #[test]
