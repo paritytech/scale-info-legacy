@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog].
 
 ## 0.2.5 (2025-11-03)
 
-- Add proper support for `PartialEq`, `Eq`, `PartialOrd` and `Ord` to `LookupName` (and `Ord` + `PartialOrd` to `InsertName`).
+- Add proper support for `PartialEq`, `Eq`, `PartialOrd`, `Ord` and `Hash` to `LookupName` (and `Ord` + `PartialOrd` to `InsertName`). This most notably allows both of these types to be used as keys in HashMaps / BTreeMaps.
 
 ## 0.2.4 (2025-10-08)
 
