@@ -1,6 +1,6 @@
 [package]
 name = "scale-info-legacy"
-version = "0.2.5"
+version = "0.2.6"
 authors = ["Parity Technologies <admin@parity.io>"]
 edition = "2021"
 

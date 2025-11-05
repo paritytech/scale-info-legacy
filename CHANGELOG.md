@@ -4,6 +4,10 @@ The format is based on [Keep a Changelog].
 
 [Keep a Changelog]: http://keepachangelog.com/en/1.0.0/
 
+## 0.2.6 (2025-11-05)
+
+- Add an `Unknown` type to the default types that are defined by a `TypeRegistry`. Arbitrary bytes are highly likely to fail to decode into `Unknown`, and so it can be used to denote types that we know exist (and perhaps need to have defined) but don't know how to actually decode.
+
 ## 0.2.5 (2025-11-03)
 
 - Add proper support for `PartialEq`, `Eq`, `PartialOrd`, `Ord` and `Hash` to `LookupName` (and `Ord` + `PartialOrd` to `InsertName`). This most notably allows both of these types to be used as keys in HashMaps / BTreeMaps.
