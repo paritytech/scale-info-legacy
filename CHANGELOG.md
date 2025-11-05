@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog].
 
 ## 0.2.6 (2025-11-05)
 
-- Add an `Unknown` type to the default types that are defined by a `TypeRegistry`. Arbitrary bytes are highly likely to fail to decode into `Unknown`, and so it can be used to denote types that we know exist (and perhaps need to have defined) but don't know how to actually decode.
+- Add a `special::Unknown` type to the default types that are defined by a `TypeRegistry`. Arbitrary bytes are highly likely to fail to decode into `special::Unknown`, and so it can be used to denote types that we know exist (and perhaps need to have defined) but don't know how to actually decode.
 
 ## 0.2.5 (2025-11-03)
 
