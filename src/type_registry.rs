@@ -180,11 +180,11 @@ impl TypeRegistry {
         {
             let name = |i| {
                 if i == 0 {
-                    format!("special::Unknown")
+                    "special::Unknown".to_owned()
                 } else if i < 16 {
                     format!("special::Unknown{i}")
                 } else {
-                    format!("()")
+                    "()".to_owned()
                 }
             };
 
