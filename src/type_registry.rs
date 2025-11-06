@@ -20,7 +20,6 @@ use crate::insert_name::{self, InsertName};
 use crate::lookup_name::{self, LookupName, LookupNameDef};
 use crate::type_shape::{self, Primitive, TypeShape, VariantDesc};
 use alloc::borrow::ToOwned;
-use alloc::format;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -172,41 +171,13 @@ impl TypeRegistry {
     pub fn basic() -> Self {
         let mut registry = TypeRegistry::empty();
 
-        // Insert an "Unknown" type. The point of this type is that is resolves
-        // successfully but to something which should be extremely unlikely to successfully
-        // match any sequence of bytes (it would match only 0xDEADDEADDEADDEADDEADDEADDEADDEAD).
-        // Thus, it can be used to express that we know _of_ some type but if we actually need
-        // to use the type at runtime, it'll fail.
-        {
-            let name = |i| {
-                if i == 0 {
-                    "special::Unknown".to_owned()
-                } else if i < 16 {
-                    format!("special::Unknown{i}")
-                } else {
-                    "()".to_owned()
-                }
-            };
-
-            for i in 0..16 {
-                let this_name = name(i);
-                let next_name = name(i + 1);
-                let shape = TypeShape::EnumOf(vec![type_shape::Variant {
-                    // 0xDE, 0xAD, 0xDE, 0xAD ...
-                    index: if i % 2 == 0 { 0xDE } else { 0xAD },
-                    name: "Unknown".to_owned(),
-                    fields: type_shape::VariantDesc::TupleOf(vec![
-                        LookupName::parse(&next_name).unwrap()
-                    ]),
-                }]);
-
-                let name = InsertName::from_str(&this_name).unwrap();
-                registry.insert(name, shape);
-            }
-        }
-
         // Basic types that we expect to work by default.
         let basic_types = [
+            // The point of this "Unknown" type is that we can point to it,
+            // and it's a valid type that can be converted to other formats for
+            // instance (eg V14 type info), but nothing can actually be decoded
+            // into it or encoded from it, since it has no variants.
+            ("special::Unknown", TypeShape::EnumOf(Vec::new())),
             ("bool", TypeShape::Primitive(Primitive::Bool)),
             ("char", TypeShape::Primitive(Primitive::Char)),
             ("u8", TypeShape::Primitive(Primitive::U8)),
