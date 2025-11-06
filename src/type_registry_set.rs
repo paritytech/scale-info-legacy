@@ -19,12 +19,12 @@
 //! which itself also implements [`scale_type_resolver::TypeResolver`].
 
 use crate::type_registry::{
-    RuntimeApi, TypeRegistryResolveError, TypeRegistryResolveWithParentError,
+    RuntimeApi, RuntimeApiName, TypeRegistryResolveError, TypeRegistryResolveWithParentError,
 };
 use crate::{LookupName, TypeRegistry};
 use alloc::borrow::Cow;
 use alloc::collections::VecDeque;
-use hashbrown::HashSet;
+use hashbrown::{HashMap, HashSet};
 use scale_type_resolver::TypeResolver;
 
 /// This can be constructed from an iterator of [`crate::TypeRegistry`]s. When resolving types
@@ -134,21 +134,32 @@ impl<'a> TypeRegistrySet<'a> {
         None
     }
 
-    /// Return an iterator of tuples of `(trait_name, method_name)` for all runtime APIs
-    /// that exist in this set of registries.
-    pub fn runtime_apis(&self) -> impl Iterator<Item = (&str, &str)> {
-        // We want to avoid returning any API more than once, so keep track of what we've seen already.
-        let mut seen = HashSet::<(&str, &str)>::new();
+    /// Return an iterator over each of the Runtime APIs that has been defined. First,
+    /// [`RuntimeApiName::Trait`] is returned to indicate the trait being iterated over next,
+    /// and then [`RuntimeApiName::Method`] is returned for each of the method names in that
+    /// trait. A trait will only be iterated over once.
+    pub fn runtime_apis(&self) -> impl Iterator<Item = RuntimeApiName<'_>> {
+        let it = self.registries.iter().rev().flat_map(move |registry| registry.runtime_apis());
 
-        self.registries.iter().rev().flat_map(move |registry| registry.runtime_apis()).filter_map(
-            move |(trait_name, method_name)| {
-                if seen.insert((trait_name, method_name)) {
-                    Some((trait_name, method_name))
-                } else {
-                    None
+        // We need to aggregate across our registries so that we return each
+        // trait name / entry exactly once.
+        let mut all_apis = HashMap::<&str, HashSet<&str>>::new();
+        let mut current_trait = "";
+        for api in it {
+            match api {
+                RuntimeApiName::Trait(name) => current_trait = name,
+                RuntimeApiName::Method(name) => {
+                    all_apis.entry(current_trait).or_default().insert(name);
                 }
-            },
-        )
+            }
+        }
+
+        // Now we can iterate over this aggregation to match the format of `TypeRegistry::runtime_apis`.
+        all_apis.into_iter().flat_map(|(trait_name, method_names)| {
+            core::iter::once(RuntimeApiName::Trait(trait_name)).chain(
+                method_names.into_iter().map(|method_name| RuntimeApiName::Method(method_name)),
+            )
+        })
     }
 }
 
@@ -181,7 +192,6 @@ mod test {
     use crate::type_shape::Primitive;
     use crate::{InsertName, TypeShape};
     use alloc::vec;
-    use alloc::vec::Vec;
     use scale_type_resolver::{BitsOrderFormat, BitsStoreFormat};
 
     fn ln(name: &str) -> LookupName {
@@ -286,7 +296,7 @@ mod test {
     fn runtime_apis_works_avoiding_dupes() {
         let mut a = TypeRegistry::empty();
         a.try_insert_runtime_api_without_inputs("A", "a1", "bool").unwrap();
-        a.try_insert_runtime_api_without_inputs("A", "a2", "bool").unwrap();
+        a.try_insert_runtime_api_without_inputs("A", "a2", "u32").unwrap();
 
         let mut b = TypeRegistry::empty();
         b.try_insert_runtime_api_without_inputs("A", "a2", "bool").unwrap();
@@ -297,11 +307,43 @@ mod test {
         // Resolving will look in c, then b, then a.
         let types = TypeRegistrySet::from_iter([a, b, c]);
 
-        let all_apis: Vec<_> = types.runtime_apis().collect();
-        assert_eq!(all_apis, vec![("B", "b1"), ("A", "a2"), ("A", "a1")]);
+        // Return all APIs and aggregate them to check equality and ensure no dupes are returned:
+        let mut all_apis = HashMap::<&str, HashSet<&str>>::new();
+        let mut current_trait = "";
+        for api in types.runtime_apis() {
+            match api {
+                RuntimeApiName::Trait(name) => {
+                    // The trait name should not have been given before.
+                    assert!(!all_apis.contains_key(name));
 
+                    current_trait = name;
+                }
+                RuntimeApiName::Method(name) => {
+                    // A trait name should have been given already.
+                    assert!(current_trait != "");
+                    // The method name should not have been given before.
+                    assert!(!all_apis.entry(current_trait).or_default().contains(name));
+
+                    all_apis.entry(current_trait).or_default().insert(name);
+                }
+            }
+        }
+
+        // This is the set of APIs we should see when iterating them all:
+        assert_eq!(
+            all_apis,
+            HashMap::from_iter([
+                ("A", HashSet::from_iter(["a1", "a2"])),
+                ("B", HashSet::from_iter(["b1"]))
+            ])
+        );
+
+        // They should all exist when queried as a sanity check:
         assert!(types.runtime_api("A", "a1").is_some());
         assert!(types.runtime_api("A", "a2").is_some());
         assert!(types.runtime_api("B", "b1").is_some());
+
+        // Because of resolve order, we should see the "bool" version and not the "u32" version.
+        assert_eq!(types.runtime_api("A", "a2").unwrap().output, ln("bool"));
     }
 }

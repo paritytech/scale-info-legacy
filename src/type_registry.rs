@@ -120,6 +120,19 @@ pub struct TypeRegistry {
     runtime_apis: HashMap<String, HashMap<String, RuntimeApi>>,
 }
 
+/// This is handed back when we iterate over Runtime APIs via [`TypeRegistry::runtime_apis()`].
+/// First, [`RuntimeApiName::Trait`] will be returned to indicate which trait is being iterated
+/// over, and then [`RuntimeApiName::Method`] will be returned with the name of each method in the
+/// aforementioned trait.
+///
+/// Each trait will be iterated exactly once.
+pub enum RuntimeApiName<'a> {
+    /// The name of the trait that the methods given next are defined on.
+    Trait(&'a str),
+    /// The name of a method in the most recently returned [`RuntimeApiName::Trait`].
+    Method(&'a str),
+}
+
 /// This represents a single Runtime API.
 #[derive(Debug, Clone)]
 pub struct RuntimeApi {
@@ -555,12 +568,15 @@ impl TypeRegistry {
         self.runtime_apis.get(trait_name)?.get(method_name)
     }
 
-    /// Return an iterator of tuples of `(trait_name, method_name)` for all runtime APIs
-    /// that exist in this registry.
-    pub fn runtime_apis(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.runtime_apis
-            .iter()
-            .flat_map(|(k, v)| v.keys().map(move |method_name| (k.as_str(), &**method_name)))
+    /// Return an iterator over each of the Runtime APIs that has been defined. First,
+    /// [`RuntimeApiName::Trait`] is returned to indicate the trait being iterated over next,
+    /// and then [`RuntimeApiName::Method`] is returned for each of the method names in that
+    /// trait. A trait will only be iterated over once.
+    pub fn runtime_apis(&self) -> impl Iterator<Item = RuntimeApiName<'_>> {
+        self.runtime_apis.iter().flat_map(|(k, v)| {
+            core::iter::once(RuntimeApiName::Trait(k))
+                .chain(v.keys().map(|method| RuntimeApiName::Method(method)))
+        })
     }
 
     /// Extend this type registry with the one provided. In case of any matches, the provided types
