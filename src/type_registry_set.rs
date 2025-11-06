@@ -139,7 +139,7 @@ impl<'a> TypeRegistrySet<'a> {
     /// and then [`RuntimeApiName::Method`] is returned for each of the method names in that
     /// trait. A trait will only be iterated over once.
     pub fn runtime_apis(&self) -> impl Iterator<Item = RuntimeApiName<'_>> {
-        let it = self.registries.iter().rev().flat_map(move |registry| registry.runtime_apis());
+        let it = self.registries.iter().rev().flat_map(|registry| registry.runtime_apis());
 
         // We need to aggregate across our registries so that we return each
         // trait name / entry exactly once.
@@ -160,6 +160,28 @@ impl<'a> TypeRegistrySet<'a> {
                 method_names.into_iter().map(|method_name| RuntimeApiName::Method(method_name)),
             )
         })
+    }
+
+    /// Return an iterator over each of the Runtime API method names in a given trait.
+    pub fn runtime_apis_in_trait<'this, 'tn>(
+        &'this self,
+        trait_name: &'tn str,
+    ) -> impl Iterator<Item = &'this str> + use<'this, 'tn> {
+        let mut seen = HashSet::<&str>::new();
+
+        self.registries
+            .iter()
+            .rev()
+            .flat_map(|registry| registry.runtime_apis_in_trait(trait_name))
+            .filter_map(
+                move |method_name| {
+                    if seen.insert(method_name) {
+                        None
+                    } else {
+                        Some(method_name)
+                    }
+                },
+            )
     }
 }
 

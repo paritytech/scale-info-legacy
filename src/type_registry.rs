@@ -579,6 +579,16 @@ impl TypeRegistry {
         })
     }
 
+    /// Return an iterator over each of the Runtime API method names in a given trait.
+    pub fn runtime_apis_in_trait(&self, trait_name: &str) -> impl Iterator<Item = &'_ str> {
+        let Some(apis) = self.runtime_apis.get(trait_name) else {
+            return Either::A(core::iter::empty());
+        };
+
+        let it = apis.keys().map(|k| &**k);
+        Either::B(it)
+    }
+
     /// Extend this type registry with the one provided. In case of any matches, the provided types
     /// and runtime API methods will overwrite the existing ones.
     pub fn extend(&mut self, other: TypeRegistry) {
