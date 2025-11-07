@@ -181,6 +181,25 @@ impl LookupName {
         })
     }
 
+    /// Create a [`LookupName`] representing a tuple of the provided type names.
+    pub fn unnamed<'a>(input: impl IntoIterator<Item = &'a LookupName>) -> LookupName {
+        let mut name = LookupName {
+            registry: SmallVec::from_iter([
+                // This is just a placeholder; we'll replace it at the bottom.
+                LookupNameInner::Unnamed { params: SmallVec::new() },
+            ]),
+            idx: 0,
+            pallet: None,
+        };
+
+        // Put the content of each of the given names into our new registry
+        let ids = input.into_iter().map(|id| name.insert_def(id.def(), &[])).collect();
+
+        // Overwrite our "entry point" to point to each of these inserted Ids.
+        name.registry[0] = LookupNameInner::Unnamed { params: ids };
+        name
+    }
+
     /// This will scope the lookup such that it can make use of types within the given pallet.
     pub fn in_pallet(mut self, pallet_name: impl Into<String>) -> LookupName {
         self.pallet = Some(pallet_name.into());
@@ -1267,5 +1286,20 @@ mod test {
         for (input, output) in cases {
             assert_eq!(&parser::normalize_whitespace(input), output);
         }
+    }
+
+    #[test]
+    fn unnamed_lookup_name() {
+        let entries = [
+            LookupName::parse("u32").unwrap(),
+            LookupName::parse("Foo<A, B, C>").unwrap(),
+            LookupName::parse("(bool, char)").unwrap(),
+            LookupName::parse("[u8; 32]").unwrap(),
+        ];
+
+        let tuple = LookupName::unnamed(&entries);
+        let expected = LookupName::parse("(u32, Foo<A,B,C>, (bool, char), [u8; 32])").unwrap();
+
+        assert_eq!(tuple, expected);
     }
 }
