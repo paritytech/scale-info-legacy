@@ -4,6 +4,11 @@ The format is based on [Keep a Changelog].
 
 [Keep a Changelog]: http://keepachangelog.com/en/1.0.0/
 
+## 0.3.0 (2025-11-10)
+
+- Add a couple of helpers to `LookupName` (`::array()` and `::unnamed()`) to make it easy to construct tuple or array `LookupName`s without any shenanigane involving wrapping strings in tuple/array syntax and re-parsing. 
+- Improve Runtime API iteration and add better guarantees around it so that upstream libraries can use it more reliably.
+
 ## 0.2.6 (2025-11-05)
 
 - Add a `special::Unknown` type to the default types that are defined by a `TypeRegistry`. Arbitrary bytes are highly likely to fail to decode into `special::Unknown`, and so it can be used to denote types that we know exist (and perhaps need to have defined) but don't know how to actually decode.
