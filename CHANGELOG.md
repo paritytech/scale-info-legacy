@@ -6,7 +6,6 @@ The format is based on [Keep a Changelog].
 
 ## 0.3.0 (2025-11-10)
 
-- Improve the `special::Unknown` type to be quicker to construct and to deny _any_ decoding.
 - Add a couple of helpers to `LookupName` (`::array()` and `::unnamed()`) to make it easy to construct tuple or array `LookupName`s without any shenanigane involving wrapping strings in tuple/array syntax and re-parsing. 
 - Improve Runtime API iteration and add better guarantees around it so that upstream libraries can use it more reliably.
 
