@@ -156,9 +156,8 @@ impl<'a> TypeRegistrySet<'a> {
 
         // Now we can iterate over this aggregation to match the format of `TypeRegistry::runtime_apis`.
         all_apis.into_iter().flat_map(|(trait_name, method_names)| {
-            core::iter::once(RuntimeApiName::Trait(trait_name)).chain(
-                method_names.into_iter().map(|method_name| RuntimeApiName::Method(method_name)),
-            )
+            core::iter::once(RuntimeApiName::Trait(trait_name))
+                .chain(method_names.into_iter().map(RuntimeApiName::Method))
         })
     }
 
@@ -173,15 +172,7 @@ impl<'a> TypeRegistrySet<'a> {
             .iter()
             .rev()
             .flat_map(|registry| registry.runtime_apis_in_trait(trait_name))
-            .filter_map(
-                move |method_name| {
-                    if seen.insert(method_name) {
-                        None
-                    } else {
-                        Some(method_name)
-                    }
-                },
-            )
+            .filter(move |method_name| !seen.insert(method_name))
     }
 }
 
@@ -342,7 +333,7 @@ mod test {
                 }
                 RuntimeApiName::Method(name) => {
                     // A trait name should have been given already.
-                    assert!(current_trait != "");
+                    assert!(!current_trait.is_empty());
                     // The method name should not have been given before.
                     assert!(!all_apis.entry(current_trait).or_default().contains(name));
 
