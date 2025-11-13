@@ -4,6 +4,10 @@ The format is based on [Keep a Changelog].
 
 [Keep a Changelog]: http://keepachangelog.com/en/1.0.0/
 
+## 0.3.1 (2025-11-13)
+
+- Support parsing slice type names like `&[u8]` and `&[bool]`. This was not expected to exist, but shows up in a couple of constant type names in older metadatas. `&[T]` is parsed and handled as if it were `Vec<T>`.
+
 ## 0.3.0 (2025-11-10)
 
 - Add a couple of helpers to `LookupName` (`::array()` and `::unnamed()`) to make it easy to construct tuple or array `LookupName`s without any shenanigane involving wrapping strings in tuple/array syntax and re-parsing. 
