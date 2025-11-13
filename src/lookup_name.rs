@@ -727,6 +727,7 @@ mod parser {
             parse_unnamed_into_type_name(input, registry),
             parse_array_into_type_name(input, registry),
             parse_named_into_type_name(input, registry),
+            parse_slice_into_type_name(input, registry),
         )
     }
 
@@ -820,6 +821,35 @@ mod parser {
             Some(Err(ParseError::new_at(ParseErrorKind::ClosingSquareBracketMissing, loc)))
         } else {
             registry.push(LookupNameInner::Array { param, length });
+            Some(Ok(()))
+        }
+    }
+
+    // Parse a slice like &[u8] or &[Foo] (this is very rare but appears in some old metadatas).
+    // These are treated as Vecs and parsed as such.
+    fn parse_slice_into_type_name(
+        input: &mut StrTokens<'_>,
+        registry: &mut Registry,
+    ) -> Option<Result<(), ParseError>> {
+        if !input.tokens("&[".chars()) {
+            return None;
+        }
+
+        skip_whitespace(input);
+        let param = match parse_type_name(input, registry) {
+            Ok(()) => registry.len() - 1,
+            Err(e) => return Some(Err(e)),
+        };
+        skip_whitespace(input);
+
+        if !input.token(']') {
+            let loc = input.location().offset();
+            Some(Err(ParseError::new_at(ParseErrorKind::ClosingSquareBracketMissing, loc)))
+        } else {
+            registry.push(LookupNameInner::Named {
+                name: NameStr::from_str("Vec"),
+                params: SmallVec::from_iter([param]),
+            });
             Some(Ok(()))
         }
     }
@@ -1017,6 +1047,9 @@ mod test {
     #[test]
     fn basic_eq_and_hash_works() {
         let cmps = [
+            // Slices are treated identically to vecs
+            (expect_parse("&[u8]"), expect_parse("Vec<u8>"), true),
+            (expect_parse("&[Foo]"), expect_parse("Vec<Foo>"), true),
             // basic named types
             (expect_parse("path::to::Foo"), expect_parse("path::to::Foo"), true),
             (expect_parse("Foo<u8>"), expect_parse("Foo<u8>"), true),
@@ -1117,6 +1150,10 @@ mod test {
         expect_parse("[usize;32]");
         expect_parse("[a::b::Foo<T,A,B> ;32]");
         expect_parse("[bool;    32]");
+
+        expect_parse("&[bool]");
+        expect_parse("&[ u8]");
+        expect_parse("&[a::b::Foo<T,A,B> ]");
     }
 
     #[test]
@@ -1188,6 +1225,12 @@ mod test {
         let tn = expect_parse("[Foo; 16]");
         let def = tn.def().unwrap_array();
         assert!(def.length() == 16 && def.param_def().unwrap_named().name() == "Foo");
+
+        let tn = expect_parse("&[u8]");
+        let def = tn.def().unwrap_named();
+        assert!(
+            def.name() == "Vec" && def.param_defs().next().unwrap().unwrap_named().name() == "u8"
+        );
     }
 
     #[test]
