@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog].
 
 ## 0.3.1 (2025-11-13)
 
-- Support parsing slice type names like `&[u8]` and `&[bool]`. This was not expected to exist, but shows up in a couple of constant type names in older metadatas. `&[T]` is parsed and handled as if it were `Vec<T>`.
+- Support parsing slice type names like `&[u8]` and `&[bool]`. Slice based names were not expected to exist, but show up in a couple of constant type names in older metadatas. `&[T]` is parsed and handled as if it were `Vec<T>`.
 
 ## 0.3.0 (2025-11-10)
 
