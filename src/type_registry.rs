@@ -20,7 +20,6 @@ use crate::insert_name::{self, InsertName};
 use crate::lookup_name::{self, LookupName, LookupNameDef};
 use crate::type_shape::{self, Primitive, TypeShape, VariantDesc};
 use alloc::borrow::ToOwned;
-use alloc::format;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
