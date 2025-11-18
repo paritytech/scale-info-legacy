@@ -183,6 +183,11 @@ impl ChainTypeRegistry {
         TypeRegistrySet::from_iter(all)
     }
 
+    /// Return the specific spec version ranges that we've defined types for.
+    pub fn spec_version_ranges(&self) -> impl Iterator<Item = (u64, u64)> + use<'_> {
+        self.for_spec.iter().map(|(range, _)| *range)
+    }
+
     /// Extend this chain type registry with the one provided. In case of any matches, the provided types
     /// will overwrite the existing ones.
     pub fn extend(&mut self, other: ChainTypeRegistry) {

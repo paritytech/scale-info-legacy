@@ -4,6 +4,14 @@ The format is based on [Keep a Changelog].
 
 [Keep a Changelog]: http://keepachangelog.com/en/1.0.0/
 
+## 0.3.2 (2025-11-18)
+
+A few tweaks to make it easier to test type registries:
+
+- Support converting between `InsertName` and `LookupName`.
+- Add `.keys()` iterator to iterate over concrete keys in a `TypeRegistry` or `TypeRegistrySet`; this helps with tests which require iterating over types.
+- Add `.spec_version_ranges()` to `ChainTypeRegistry` to allow discovering which spec versions have types defined (so that we can be sure to try them all via the above).
+
 ## 0.3.1 (2025-11-13)
 
 - Support parsing slice type names like `&[u8]` and `&[bool]`. Slice based names were not expected to exist, but show up in a couple of constant type names in older metadatas. `&[T]` is parsed and handled as if it were `Vec<T>`.

@@ -128,6 +128,23 @@ impl core::str::FromStr for LookupName {
     }
 }
 
+impl core::convert::From<crate::InsertName> for LookupName {
+    fn from(value: crate::InsertName) -> Self {
+        let param_ids = value.params.iter().enumerate().map(|(idx, _)| idx + 1).collect();
+
+        let params_iter = value.params.into_iter().map(|param_name| LookupNameInner::Named {
+            name: param_name.into(),
+            params: Default::default(),
+        });
+
+        let registry_iter =
+            core::iter::once(LookupNameInner::Named { name: value.name.into(), params: param_ids })
+                .chain(params_iter);
+
+        LookupName { registry: SmallVec::from_iter(registry_iter), idx: 0, pallet: value.pallet }
+    }
+}
+
 impl core::convert::TryFrom<&str> for LookupName {
     type Error = ParseError;
     fn try_from(s: &str) -> Result<Self, Self::Error> {
@@ -220,6 +237,15 @@ impl LookupName {
     pub fn in_pallet(mut self, pallet_name: impl Into<String>) -> LookupName {
         self.pallet = Some(pallet_name.into());
         self
+    }
+
+    /// Return the name of this type, if there is one (ie it is not an unnamed type like a tuple or array).
+    /// The name of a type includes its path, if it has one.
+    pub fn name(&self) -> Option<&str> {
+        match self.def() {
+            LookupNameDef::Named(named) => Some(named.name),
+            _ => None,
+        }
     }
 
     /// The pallet that we should perform this type lookup in.
@@ -1375,6 +1401,29 @@ mod test {
             let array = LookupName::array(&inner, 32);
             let expected = LookupName::parse(&format!("[{inner}; 32]")).unwrap();
             assert_eq!(array, expected);
+        }
+    }
+
+    #[test]
+    fn to_from_insert_name() {
+        let cases = [
+            "Foo<A, B, C>",
+            "Bar",
+            "foo::bar::Wibble",
+            "foo::bar::Wibble<A>",
+            "<Bar as Foo>::Something",
+        ];
+
+        for case in cases {
+            let lookup_name = LookupName::parse(case).expect("parses ok");
+            let insert_name: crate::InsertName =
+                lookup_name.clone().try_into().expect("converts to InsertName ok");
+            let lookup_name_again: LookupName = insert_name.into();
+
+            assert_eq!(
+                lookup_name, lookup_name_again,
+                "mismatch between {lookup_name} and {lookup_name_again}"
+            );
         }
     }
 }
