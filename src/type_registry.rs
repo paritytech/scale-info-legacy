@@ -292,7 +292,7 @@ impl TypeRegistry {
         self.types.keys().map(|key| {
             let insert_name = InsertName {
                 name: key.name.clone(),
-                params: (0..key.generic_params).map(|_| format!("()")).collect(),
+                params: (0..key.generic_params).map(|_| "()".to_owned()).collect(),
                 pallet: key.pallet.clone(),
             };
             LookupName::from(insert_name)
