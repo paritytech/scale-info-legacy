@@ -15,6 +15,7 @@
 
 //! This module provides the name used to insert types in a registry.
 
+use crate::lookup_name::{LookupName, LookupNameDef};
 use alloc::borrow::Cow;
 use alloc::borrow::ToOwned;
 use alloc::format;
@@ -57,12 +58,28 @@ pub struct InsertName {
 impl InsertName {
     /// Parse a string into an [`InsertName`].
     pub fn parse(s: &str) -> Result<Self, ParseError> {
-        use crate::lookup_name::{LookupName, LookupNameDef};
+        let ty_name = LookupName::parse(s).map_err(|_| ParseError::Invalid)?;
+        ty_name.try_into()
+    }
 
-        // The provided name can just be a &str, or it can be a LookupName if we want
-        // to also configure a pallet value to scope it.
-        let mut ty_name = LookupName::parse(s).map_err(|_| ParseError::Invalid)?;
+    /// Scope the inserted type to being within the given pallet. Only lookups that are
+    /// also performed within this pallet will make use of this type.
+    pub fn in_pallet(mut self, pallet_name: impl Into<String>) -> InsertName {
+        self.pallet = Some(pallet_name.into());
+        self
+    }
+}
 
+impl core::str::FromStr for InsertName {
+    type Err = ParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s)
+    }
+}
+
+impl core::convert::TryFrom<LookupName> for InsertName {
+    type Error = ParseError;
+    fn try_from(mut ty_name: LookupName) -> Result<Self, Self::Error> {
         let pallet = ty_name.take_pallet();
 
         // We only accept named types like Foo<A, B> or path::to::Bar.
@@ -87,20 +104,6 @@ impl InsertName {
             .collect::<Result<_, _>>()?;
 
         Ok(InsertName { name, params, pallet })
-    }
-
-    /// Scope the inserted type to being within the given pallet. Only lookups that are
-    /// also performed within this pallet will make use of this type.
-    pub fn in_pallet(mut self, pallet_name: impl Into<String>) -> InsertName {
-        self.pallet = Some(pallet_name.into());
-        self
-    }
-}
-
-impl core::str::FromStr for InsertName {
-    type Err = ParseError;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::parse(s)
     }
 }
 

@@ -285,6 +285,19 @@ impl TypeRegistry {
         registry
     }
 
+    /// Return a [`LookupName`] corresponding to one concrete type for every entry in the registry.
+    /// Any generic parameters are substituted for `()` in order that we can return valid concrete types.
+    pub fn keys(&self) -> impl Iterator<Item = LookupName> + use<'_> {
+        self.types.keys().map(|key| {
+            let insert_name = InsertName {
+                name: key.name.clone(),
+                params: (0..key.generic_params).map(|_| "()".to_owned()).collect(),
+                pallet: key.pallet.clone(),
+            };
+            LookupName::from(insert_name)
+        })
+    }
+
     /// Insert a new type into the registry.
     ///
     /// # Panics

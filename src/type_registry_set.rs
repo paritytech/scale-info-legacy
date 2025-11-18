@@ -57,6 +57,18 @@ impl<'a> TypeRegistrySet<'a> {
         self.registries.push_back(types.into());
     }
 
+    /// Return a [`LookupName`] corresponding to one concrete type for every entry in the registry.
+    /// Any generic parameters are substituted for `()` in order that we can return valid concrete types.
+    pub fn keys(&self) -> impl Iterator<Item = LookupName> + use<'_> {
+        use alloc::rc::Rc;
+        use core::cell::RefCell;
+        let seen = Rc::new(RefCell::new(HashSet::<LookupName>::new()));
+        self.registries.iter().rev().flat_map(move |registry| {
+            let seen = seen.clone();
+            registry.keys().filter(move |key| seen.borrow_mut().insert(key.clone()))
+        })
+    }
+
     /// Resolve some type information by providing a [`LookupName`], which is the concrete name of
     /// a type we want to know how to decode values for, and a `visitor` which will be called in
     /// order to describe how to decode it.
@@ -358,5 +370,28 @@ mod test {
 
         // Because of resolve order, we should see the "bool" version and not the "u32" version.
         assert_eq!(types.runtime_api("A", "a2").unwrap().output, ln("bool"));
+    }
+
+    #[test]
+    fn keys_returned_without_dupes() {
+        let mut a = TypeRegistry::empty();
+        a.insert(InsertName::parse("u32").unwrap(), TypeShape::Primitive(Primitive::U32));
+        a.insert(InsertName::parse("u64").unwrap(), TypeShape::Primitive(Primitive::U64));
+
+        let mut b = TypeRegistry::empty();
+        b.insert(InsertName::parse("u32").unwrap(), TypeShape::Primitive(Primitive::U32));
+        b.insert(InsertName::parse("u64").unwrap(), TypeShape::Primitive(Primitive::U64));
+        b.insert(InsertName::parse("Foo").unwrap(), TypeShape::StructOf(vec![]));
+        b.insert(InsertName::parse("Bar").unwrap(), TypeShape::StructOf(vec![]));
+
+        let mut c = TypeRegistry::empty();
+        c.insert(InsertName::parse("Foo").unwrap(), TypeShape::Primitive(Primitive::U32));
+
+        // Resolving will look in c, then b, then a.
+        let types = TypeRegistrySet::from_iter([a, b, c]);
+
+        // No dupes back:
+        let keys: HashSet<LookupName> = types.keys().collect();
+        assert_eq!(keys, HashSet::from_iter([ln("Foo"), ln("u32"), ln("u64"), ln("Bar"),]));
     }
 }
