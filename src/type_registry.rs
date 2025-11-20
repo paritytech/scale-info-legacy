@@ -218,21 +218,22 @@ impl TypeRegistry {
             ("BTreeMap<K,V>", TypeShape::SequenceOf(LookupName::parse("(K, V)").unwrap())),
             ("BTreeSet<V>", TypeShape::SequenceOf(LookupName::parse("V").unwrap())),
             ("BinaryHeap<V>", TypeShape::SequenceOf(LookupName::parse("V").unwrap())),
-            ("Cow<T>", TypeShape::TupleOf(vec![LookupName::parse("T").unwrap()])),
+            ("Cow<T>", TypeShape::UnnamedStructOf(vec![LookupName::parse("T").unwrap()])),
             (
                 "Option<T>",
                 TypeShape::EnumOf(vec![
                     type_shape::Variant {
                         index: 0,
                         name: "None".to_owned(),
-                        fields: type_shape::VariantDesc::TupleOf(vec![]),
+                        fields: type_shape::VariantDesc::UnnamedStructOf(vec![]),
                     },
                     type_shape::Variant {
                         index: 1,
                         name: "Some".to_owned(),
-                        fields: type_shape::VariantDesc::TupleOf(vec![
-                            LookupName::parse("T").unwrap()
-                        ]),
+                        fields: type_shape::VariantDesc::UnnamedStructOf(vec![LookupName::parse(
+                            "T",
+                        )
+                        .unwrap()]),
                     },
                 ]),
             ),
@@ -242,23 +243,25 @@ impl TypeRegistry {
                     type_shape::Variant {
                         index: 0,
                         name: "Ok".to_owned(),
-                        fields: type_shape::VariantDesc::TupleOf(vec![
-                            LookupName::parse("T").unwrap()
-                        ]),
+                        fields: type_shape::VariantDesc::UnnamedStructOf(vec![LookupName::parse(
+                            "T",
+                        )
+                        .unwrap()]),
                     },
                     type_shape::Variant {
                         index: 1,
                         name: "Err".to_owned(),
-                        fields: type_shape::VariantDesc::TupleOf(vec![
-                            LookupName::parse("E").unwrap()
-                        ]),
+                        fields: type_shape::VariantDesc::UnnamedStructOf(vec![LookupName::parse(
+                            "E",
+                        )
+                        .unwrap()]),
                     },
                 ]),
             ),
-            ("PhantomData", TypeShape::TupleOf(vec![])),
+            ("PhantomData", TypeShape::UnnamedStructOf(vec![])),
             // These exist just so that resolving bitvecs using these store types will work.
-            ("bitvec::order::Lsb0", TypeShape::StructOf(vec![])),
-            ("bitvec::order::Msb0", TypeShape::StructOf(vec![])),
+            ("bitvec::order::Lsb0", TypeShape::NamedStructOf(vec![])),
+            ("bitvec::order::Msb0", TypeShape::NamedStructOf(vec![])),
             // So long as the store type is a suitable primitive and the order type one of the above, this will work out.
             (
                 "bitvec::vec::BitVec<Store, Order>",
@@ -634,7 +637,7 @@ impl TypeRegistry {
                 // Depending on the type description, we we call the relevant visitor callback
                 // with the relevant details.
                 match &type_info.desc {
-                    TypeShape::StructOf(fields) => {
+                    TypeShape::NamedStructOf(fields) => {
                         let path_iter = ty_key.name.split("::");
                         let fields_iter = fields.iter().map(|field| Field {
                             name: Some(&field.name),
@@ -642,11 +645,13 @@ impl TypeRegistry {
                         });
                         Ok(visitor.visit_composite(path_iter, fields_iter))
                     }
-                    TypeShape::TupleOf(tys) => {
-                        let type_ids = tys
-                            .iter()
-                            .map(|ty| apply_param_mapping(pallet, ty.clone(), &param_mapping));
-                        Ok(visitor.visit_tuple(type_ids))
+                    TypeShape::UnnamedStructOf(tys) => {
+                        let path_iter = ty_key.name.split("::");
+                        let fields_iter = tys.iter().map(|ty| Field {
+                            name: None,
+                            id: apply_param_mapping(pallet, ty.clone(), &param_mapping),
+                        });
+                        Ok(visitor.visit_composite(path_iter, fields_iter))
                     }
                     TypeShape::EnumOf(variants) => {
                         let path_iter = ty_key.name.split("::");
@@ -654,7 +659,7 @@ impl TypeRegistry {
                             index: var.index,
                             name: &var.name,
                             fields: match &var.fields {
-                                VariantDesc::StructOf(fields) => {
+                                VariantDesc::NamedStructOf(fields) => {
                                     let field_iter = fields.iter().map(|field| Field {
                                         name: Some(&field.name),
                                         id: apply_param_mapping(
@@ -665,7 +670,7 @@ impl TypeRegistry {
                                     });
                                     Either::A(field_iter)
                                 }
-                                VariantDesc::TupleOf(fields) => {
+                                VariantDesc::UnnamedStructOf(fields) => {
                                     let field_iter = fields.iter().map(|ty| Field {
                                         name: None,
                                         id: apply_param_mapping(pallet, ty.clone(), &param_mapping),

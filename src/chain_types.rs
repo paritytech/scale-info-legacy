@@ -48,8 +48,10 @@ use serde::de::Error;
 ///         "types": {
 ///             // A simple type alias:
 ///             "Foo": "u8",
-///             // A tuple (you can also write "(bool, Vec<String>)" to achieve similar):
-///             "Tuple": ["bool", "Vec<String>"],
+///             // A tuple:
+///             "TupleOf": "(bool, Vec<String>)",
+///             // An unnamed struct (basically a tuple like "(bool, Vec<String>)" but with a path):
+///             "UnnamedStructOf": ["bool", "Vec<String>"],
 ///             // A struct with 2 fields, a and b, and a generic type.
 ///             "StructOf<T>": {
 ///                 "a": "bool",
@@ -113,7 +115,7 @@ use serde::de::Error;
 ///             "range": [null, 1000],
 ///             "types": {
 ///                 "Foo": "u64",
-///                 "Tuple": ["bool", "Vec<String>"],
+///                 "UnnamedStructOf": ["bool", "Vec<String>"],
 ///                 "StructOf<T>": { "a": "bool", "b": "T" },
 ///             },
 ///             "palletTypes": {
@@ -127,7 +129,7 @@ use serde::de::Error;
 ///             "range": [1001, 2000],
 ///             "types": {
 ///                 "Foo": "String",
-///                 "Tuple": ["bool", "Vec<String>"],
+///                 "UnnamedStructOf": ["bool", "Vec<String>"],
 ///                 "StructOf<T>": { "a": "bool", "b": "T" },
 ///             },
 ///             // Runtime APIs can also be defined per spec range.
@@ -340,8 +342,8 @@ impl<'de> serde::Deserialize<'de> for DeserializableRuntimeApiInputs {
 #[cfg_attr(test, derive(PartialEq))]
 enum DeserializableShape {
     AliasOf(LookupName),
-    StructOf(Vec<Field>),
-    TupleOf(Vec<LookupName>),
+    NamedStructOf(Vec<Field>),
+    UnnamedStructOf(Vec<LookupName>),
     EnumOf(Vec<Variant>),
 }
 
@@ -349,9 +351,9 @@ impl From<DeserializableShape> for TypeShape {
     fn from(value: DeserializableShape) -> Self {
         match value {
             DeserializableShape::AliasOf(a) => TypeShape::AliasOf(a),
-            DeserializableShape::StructOf(a) => TypeShape::StructOf(a),
+            DeserializableShape::NamedStructOf(a) => TypeShape::NamedStructOf(a),
             DeserializableShape::EnumOf(a) => TypeShape::EnumOf(a),
-            DeserializableShape::TupleOf(a) => TypeShape::TupleOf(a),
+            DeserializableShape::UnnamedStructOf(a) => TypeShape::UnnamedStructOf(a),
         }
     }
 }
@@ -386,7 +388,7 @@ impl<'de> serde::Deserialize<'de> for DeserializableShape {
             {
                 let Some(name) = map.next_key::<String>()? else {
                     // Empty map; treat it as an empty struct then:
-                    return Ok(DeserializableShape::StructOf(Vec::new()));
+                    return Ok(DeserializableShape::NamedStructOf(Vec::new()));
                 };
 
                 // Is the value an enum thing?
@@ -404,7 +406,7 @@ impl<'de> serde::Deserialize<'de> for DeserializableShape {
                     fields.push(Field { name, value });
                 }
 
-                Ok(DeserializableShape::StructOf(fields))
+                Ok(DeserializableShape::NamedStructOf(fields))
             }
 
             // An array like '["Vec<T>", "bool"]'. Ultimately similar to writing '(Vec<T>, bool)'
@@ -417,7 +419,7 @@ impl<'de> serde::Deserialize<'de> for DeserializableShape {
                 while let Some(lookup_name) = seq.next_element()? {
                     tuple_types.push(lookup_name)
                 }
-                Ok(DeserializableShape::TupleOf(tuple_types))
+                Ok(DeserializableShape::UnnamedStructOf(tuple_types))
             }
 
             // 'null' values are equivalent to '()'.
@@ -425,7 +427,7 @@ impl<'de> serde::Deserialize<'de> for DeserializableShape {
             where
                 E: Error,
             {
-                Ok(DeserializableShape::TupleOf(vec![]))
+                Ok(DeserializableShape::UnnamedStructOf(vec![]))
             }
         }
 
@@ -472,7 +474,7 @@ impl<'de> serde::Deserialize<'de> for DeserializableEnum {
                 while let Some(field) = seq.next_element::<DeserializableEnumSeq>()? {
                     let variant = match field {
                         DeserializableEnumSeq::Name(name) => {
-                            Variant { index, name, fields: VariantDesc::TupleOf(vec![]) }
+                            Variant { index, name, fields: VariantDesc::UnnamedStructOf(vec![]) }
                         }
                         DeserializableEnumSeq::Explicit(variant) => variant,
                     };
@@ -495,9 +497,11 @@ impl<'de> serde::Deserialize<'de> for DeserializableEnumFields {
         D: serde::Deserializer<'de>,
     {
         let variant_desc = match DeserializableShape::deserialize(deserializer)? {
-            DeserializableShape::AliasOf(lookup_name) => VariantDesc::TupleOf(vec![lookup_name]),
-            DeserializableShape::StructOf(fields) => VariantDesc::StructOf(fields),
-            DeserializableShape::TupleOf(fields) => VariantDesc::TupleOf(fields),
+            DeserializableShape::AliasOf(lookup_name) => {
+                VariantDesc::UnnamedStructOf(vec![lookup_name])
+            }
+            DeserializableShape::NamedStructOf(fields) => VariantDesc::NamedStructOf(fields),
+            DeserializableShape::UnnamedStructOf(fields) => VariantDesc::UnnamedStructOf(fields),
             DeserializableShape::EnumOf(_) => return Err(D::Error::custom("")),
         };
         Ok(DeserializableEnumFields(variant_desc))
@@ -567,7 +571,7 @@ impl<'de> serde::Deserialize<'de> for DeserializableEnumSeq {
                     index: index.ok_or_else(|| A::Error::custom("field 'index' is missing"))?,
                     name: name.ok_or_else(|| A::Error::custom("field 'name' is missing"))?,
                     fields: fields
-                        .unwrap_or(DeserializableEnumFields(VariantDesc::TupleOf(vec![])))
+                        .unwrap_or(DeserializableEnumFields(VariantDesc::UnnamedStructOf(vec![])))
                         .0,
                 }))
             }
@@ -618,11 +622,14 @@ mod test {
             // Basic alias to some type
             (r#""Vec<T>""#, DeserializableShape::AliasOf(ln("Vec<T>"))),
             // Tuples of types
-            (r#"["Vec<T>", "bool"]"#, DeserializableShape::TupleOf(vec![ln("Vec<T>"), ln("bool")])),
+            (
+                r#"["Vec<T>", "bool"]"#,
+                DeserializableShape::UnnamedStructOf(vec![ln("Vec<T>"), ln("bool")]),
+            ),
             // Structs of types
             (
                 r#"{ "a": "Vec<T>", "b": "bool" }"#,
-                DeserializableShape::StructOf(vec![
+                DeserializableShape::NamedStructOf(vec![
                     Field { name: "a".to_owned(), value: ln("Vec<T>") },
                     Field { name: "b".to_owned(), value: ln("bool") },
                 ]),
@@ -634,17 +641,17 @@ mod test {
                     Variant {
                         index: 0,
                         name: "One".to_owned(),
-                        fields: VariantDesc::TupleOf(vec![]),
+                        fields: VariantDesc::UnnamedStructOf(vec![]),
                     },
                     Variant {
                         index: 1,
                         name: "Two".to_owned(),
-                        fields: VariantDesc::TupleOf(vec![]),
+                        fields: VariantDesc::UnnamedStructOf(vec![]),
                     },
                     Variant {
                         index: 2,
                         name: "Three".to_owned(),
-                        fields: VariantDesc::TupleOf(vec![]),
+                        fields: VariantDesc::UnnamedStructOf(vec![]),
                     },
                 ]),
             ),
@@ -655,17 +662,17 @@ mod test {
                     Variant {
                         index: 0,
                         name: "One".to_owned(),
-                        fields: VariantDesc::TupleOf(vec![ln("Vec<T>"), ln("bool")]),
+                        fields: VariantDesc::UnnamedStructOf(vec![ln("Vec<T>"), ln("bool")]),
                     },
                     Variant {
                         index: 1,
                         name: "Two".to_owned(),
-                        fields: VariantDesc::TupleOf(vec![]),
+                        fields: VariantDesc::UnnamedStructOf(vec![]),
                     },
                     Variant {
                         index: 2,
                         name: "Three".to_owned(),
-                        fields: VariantDesc::StructOf(vec![
+                        fields: VariantDesc::NamedStructOf(vec![
                             Field { name: "a".to_owned(), value: ln("Vec<T>") },
                             Field { name: "b".to_owned(), value: ln("bool") },
                         ]),
@@ -678,7 +685,7 @@ mod test {
                 DeserializableShape::EnumOf(vec![Variant {
                     index: 3,
                     name: "One".to_owned(),
-                    fields: VariantDesc::TupleOf(vec![ln("Vec<T>"), ln("bool")]),
+                    fields: VariantDesc::UnnamedStructOf(vec![ln("Vec<T>"), ln("bool")]),
                 }]),
             ),
         ];
@@ -700,8 +707,10 @@ mod test {
                 "types": {
                     // A simple type alias:
                     "Foo": "u8",
-                    // A tuple (you can also write "(bool, Vec<String>)" to achieve similar):
-                    "Tuple": ["bool", "Vec<String>"],
+                    // A tuple:
+                    "TupleOf": "(bool, Vec<String>)",
+                    // An unnamed struct (like a tuple but with a struct name/path):
+                    "UnnamedStructOf": ["bool", "Vec<String>"],
                     // A struct with 2 fields, a and b, and a generic type.
                     "StructOf<T>": {
                         "a": "bool",
@@ -771,7 +780,7 @@ mod test {
                     "range": [null, 1000],
                     "types": {
                         "Foo": "u64",
-                        "Tuple": ["bool", "Vec<String>"],
+                        "UnnamedStructOf": ["bool", "Vec<String>"],
                         "StructOf<T>": { "a": "bool", "b": "T" },
                     },
                     "palletTypes": {
@@ -785,7 +794,7 @@ mod test {
                     "range": [1001, 2000],
                     "types": {
                         "Foo": "String",
-                        "Tuple": ["bool", "Vec<String>"],
+                        "UnnamedStructOf": ["bool", "Vec<String>"],
                         "StructOf<T>": { "a": "bool", "b": "T" },
                     },
                     "runtimeApis": {
