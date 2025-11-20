@@ -4,6 +4,10 @@ The format is based on [Keep a Changelog].
 
 [Keep a Changelog]: http://keepachangelog.com/en/1.0.0/
 
+## 0.4.0 (2025-11-20)
+
+Differentiate between `Foo: [ "bool", "Vec<String>" ]` and `Foo: "(bool, Vec<String>)"` when defining types. Previously, both were treated as tuple types, but now the former is treated like an unnamed composite/struct type (which has a name/path) and the latter a tuple type (which does not), which becomes useful when we want to translate or codegen from this sort of information.
+
 ## 0.3.2 (2025-11-18)
 
 A few tweaks to make it easier to test type registries:

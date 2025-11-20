@@ -28,9 +28,9 @@ pub use scale_type_resolver::{BitsOrderFormat, BitsStoreFormat, Primitive};
 pub enum TypeShape {
     /// A "named composite" type in scale-info. This contains a list
     /// of fields.
-    StructOf(Vec<Field>),
+    NamedStructOf(Vec<Field>),
     /// An "unnamed composite" type in scale-info.
-    TupleOf(Vec<LookupName>),
+    UnnamedStructOf(Vec<LookupName>),
     /// An enum containing a list of variants.
     EnumOf(Vec<Variant>),
     /// A sequence of some type.
@@ -79,7 +79,7 @@ pub struct Variant {
 #[cfg_attr(test, derive(PartialEq))]
 pub enum VariantDesc {
     /// named variant fields are basically a struct.
-    StructOf(Vec<Field>),
+    NamedStructOf(Vec<Field>),
     /// Unnamed variant fields are basically a tuple of type descriptions.
-    TupleOf(Vec<LookupName>),
+    UnnamedStructOf(Vec<LookupName>),
 }

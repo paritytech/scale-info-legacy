@@ -282,7 +282,7 @@ mod test {
         .unwrap();
 
         let mut b = TypeRegistry::empty();
-        b.insert_str("bitvec::order::Lsb0", TypeShape::StructOf(vec![])).unwrap();
+        b.insert_str("bitvec::order::Lsb0", TypeShape::NamedStructOf(vec![])).unwrap();
 
         let mut c = TypeRegistry::empty();
         c.insert_str("Store", TypeShape::Primitive(Primitive::U8)).unwrap();
@@ -381,8 +381,8 @@ mod test {
         let mut b = TypeRegistry::empty();
         b.insert(InsertName::parse("u32").unwrap(), TypeShape::Primitive(Primitive::U32));
         b.insert(InsertName::parse("u64").unwrap(), TypeShape::Primitive(Primitive::U64));
-        b.insert(InsertName::parse("Foo").unwrap(), TypeShape::StructOf(vec![]));
-        b.insert(InsertName::parse("Bar").unwrap(), TypeShape::StructOf(vec![]));
+        b.insert(InsertName::parse("Foo").unwrap(), TypeShape::NamedStructOf(vec![]));
+        b.insert(InsertName::parse("Bar").unwrap(), TypeShape::NamedStructOf(vec![]));
 
         let mut c = TypeRegistry::empty();
         c.insert(InsertName::parse("Foo").unwrap(), TypeShape::Primitive(Primitive::U32));
