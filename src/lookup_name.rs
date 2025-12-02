@@ -932,12 +932,13 @@ mod parser {
                         }
                     }
 
-                    // First char should exist and be a letter.
-                    if !t.peek()?.is_alphabetic() {
+                    // First char should exist and be a letter or underscore.
+                    let fst_char = t.next()?;
+                    if !(fst_char.is_alphabetic() || fst_char == '_') {
                         return None;
                     }
-                    // Rest can be letters or numbers.
-                    t.skip_while(|c| c.is_alphanumeric());
+                    // Rest can be letters or numbers or underscores.
+                    t.skip_while(|c| c.is_alphanumeric() || *c == '_');
                     Some(())
                 },
                 |t| {
@@ -1166,6 +1167,8 @@ mod test {
         expect_parse("(a,b,c,)");
 
         expect_parse("path::to::Foo"); // paths should work.
+        expect_parse("path_with_underscore::to::Foo"); // paths with underscores should work.
+        expect_parse("_path_starting_underscore::to::Foo"); // paths with underscores should work.
         expect_parse("<Wibble as Bar<u32>>::to::Foo"); // paths should work.
         expect_parse("<Wibble as Bar<u32>> ::to::\n Foo"); // paths should work with spaces in
         expect_parse("Foo");
@@ -1320,7 +1323,7 @@ mod test {
     }
 
     #[test]
-    fn parsing_trait_as_type_paths_works() {
+    fn parsing_weird_paths_works() {
         let cases = [
             ("<Foo as Bar>::Item<A, B>", "<Foo as Bar>::Item<A, B>", vec!["A", "B"]),
             ("<Foo \tas \n\nBar>::Item", "<Foo as Bar>::Item", vec![]),
@@ -1329,6 +1332,8 @@ mod test {
                 "<<Foo<Thing> as Bar<A,B>> as Wibble>::Item",
                 vec![],
             ),
+            ("_underscorefirst::Foo", "_underscorefirst::Foo", vec![]),
+            ("underscore_in_path::Foo", "underscore_in_path::Foo", vec![]),
         ];
 
         for (actual, expected, expected_params) in cases {
