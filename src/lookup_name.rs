@@ -753,6 +753,7 @@ mod parser {
             parse_unnamed_into_type_name(input, registry),
             parse_array_into_type_name(input, registry),
             parse_named_into_type_name(input, registry),
+            parse_static_str_into_type_name(input, registry),
             parse_slice_into_type_name(input, registry),
         )
     }
@@ -851,13 +852,48 @@ mod parser {
         }
     }
 
-    // Parse a slice like &[u8] or &[Foo] (this is very rare but appears in some old metadatas).
+    // Parse & or &'static
+    fn parse_reference(input: &mut StrTokens<'_>) -> bool {
+        if !input.tokens("&".chars()) {
+            return false;
+        }
+        skip_whitespace(input);
+        // We don't care if this isn't present, but sometimes it is:
+        let _ = input.tokens("'static".chars());
+        skip_whitespace(input);
+        true
+    }
+
+    // Parse a static string like &str or &'static str (this is rare but appears in some old metadatas).
+    // These are treated as Strings and parsed as such.
+    fn parse_static_str_into_type_name(
+        input: &mut StrTokens<'_>,
+        registry: &mut Registry,
+    ) -> Option<Result<(), ParseError>> {
+        if !parse_reference(input) {
+            return None;
+        }
+        if !input.tokens("str".chars()) {
+            return None;
+        }
+
+        registry.push(LookupNameInner::Named {
+            name: NameStr::from_str("String"),
+            params: SmallVec::new(),
+        });
+        Some(Ok(()))
+    }
+
+    // Parse a slice like &[u8] or &[Foo] or &'static [Bar] (this is rare but appears in some old metadatas).
     // These are treated as Vecs and parsed as such.
     fn parse_slice_into_type_name(
         input: &mut StrTokens<'_>,
         registry: &mut Registry,
     ) -> Option<Result<(), ParseError>> {
-        if !input.tokens("&[".chars()) {
+        if !parse_reference(input) {
+            return None;
+        }
+        if !input.token('[') {
             return None;
         }
 
@@ -1255,11 +1291,25 @@ mod test {
         let def = tn.def().unwrap_array();
         assert!(def.length() == 16 && def.param_def().unwrap_named().name() == "Foo");
 
+        let tn = expect_parse("& 'static[u8]");
+        let def = tn.def().unwrap_named();
+        assert!(
+            def.name() == "Vec" && def.param_defs().next().unwrap().unwrap_named().name() == "u8"
+        );
+
         let tn = expect_parse("&[u8]");
         let def = tn.def().unwrap_named();
         assert!(
             def.name() == "Vec" && def.param_defs().next().unwrap().unwrap_named().name() == "u8"
         );
+
+        let tn = expect_parse("&'static str");
+        let def = tn.def().unwrap_named();
+        assert!(def.name() == "String" && def.param_defs().next().is_none());
+
+        let tn = expect_parse("&str");
+        let def = tn.def().unwrap_named();
+        assert!(def.name() == "String" && def.param_defs().next().is_none());
     }
 
     #[test]
