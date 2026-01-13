@@ -4,6 +4,10 @@ The format is based on [Keep a Changelog].
 
 [Keep a Changelog]: http://keepachangelog.com/en/1.0.0/
 
+## 0.4.2 (2026-01-13)
+
+- Support type names like `&'static [u8]`, `&'static str` and `&str`, expanding on the support added in 0.3.1 for type names that are unexpected but do show up in some historic metadatas.
+
 ## 0.4.1 (2025-12-02)
 
 Paths containing underscore like `relay_chain::Foo`, and starting with underscores like `_foo::Bar` are now supported.
